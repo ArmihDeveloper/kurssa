@@ -1,0 +1,316 @@
+Rozdział 7: Agent, który Myśli – Planowanie, Samokorekta i Pętle ReAct
+Wprowadzenie
+Do tej pory nasz agent, mimo swoich imponujących zdolności, działał trochę jak robot z fabryki. Otrzymywał od modelu językowego kompletny plan działania i ślepo próbował go wykonać krok po kroku. Ale co, jeśli ten plan był oparty na błędnych założeniach? Co, jeśli strona internetowa, którą miał zeskrapować, zmieniła w międzyczasie swój wygląd, a przycisk "Login" ma teraz inny identyfikator? Nasz stary agent zatrzymałby się i zwrócił błąd.
+
+W tym rozdziale nauczymy go myśleć. Zaimplementujemy architekturę ReAct, która jest skrótem od Reason and Act (Myśl i Działaj). To fundamentalna zmiana, która przekształci naszego agenta w dynamicznego problem-solvera. Zamiast wykonywać z góry narzucony plan, będzie on działał w pętli: analizował sytuację, podejmował JEDEN krok, obserwował jego wynik, a następnie na nowo analizował sytuację, by zaplanować KOLEJNY krok.
+
+Krok 7.1: Teoria w Pigułce – Czym jest Pętla ReAct?
+Wyobraź sobie, że gotujesz z przepisu (stary model agenta). Jeśli w przepisie jest napisane "dodaj szczyptę soli", a ty nie masz soli, stoisz w miejscu.
+
+Teraz wyobraź sobie, że jesteś profesjonalnym kucharzem (model ReAct). Twój proces myślowy wygląda inaczej:
+
+Myśl (Reason): "Danie wydaje się mdłe. Potrzebuję czegoś, co podbije smak. Sól byłaby idealna."
+Działanie (Act): Sięgasz po solniczkę.
+Obserwacja (Observation): "O nie, solniczka jest pusta."
+Myśl (Reason): "OK, plan A zawiódł. Co jeszcze mam, co jest słone? Może sos sojowy? Tak, sos sojowy nada potrawie słoności i dodatkowego smaku umami."
+Działanie (Act): Sięgasz po sos sojowy.
+Obserwacja (Observation): "Dodałem odrobinę. Danie smakuje znacznie lepiej."
+Agent działający w pętli ReAct robi dokładnie to samo. Zamiast prosić LLM o kompletne rozwiązanie, w każdej iteracji pętli prosimy go o wygenerowanie dwóch rzeczy: Myśli (co powinienem zrobić teraz i dlaczego) oraz Działania (jakiego narzędzia użyć i z jakimi argumentami). Po wykonaniu działania, jego wynik (nawet jeśli to błąd!) jest Obserwacją, którą przekazujemy z powrotem do agenta w następnej pętli, aby mógł skorygować swój kurs.
+
+Krok 7.2: Nowe Narzędzia do "Rozglądania Się"
+Aby agent mógł skutecznie korygować błędy, musi mieć narzędzia, które pozwolą mu lepiej zrozumieć otoczenie, gdy jego pierwotne założenia zawiodą. Dodamy dwie nowe, potężne metody do naszej klasy SandboxedBrowser.
+
+Otwórz plik scraper_agent.py i dodaj poniższe metody wewnątrz klasy SandboxedBrowser.
+
+Narzędzie 1: Czytanie surowego kodu HTML
+
+Gdy agent nie może znaleźć elementu po selektorze, jego pierwszą myślą powinno być: "Pokaż mi kod źródłowy, sam znajdę, co się zmieniło".
+
+Python
+
+# TĘ METODĘ DODAJESZ WEWNĄTRZ KLASY SandboxedBrowser
+
+async def get_page_html(self) -> str:
+    """
+    Zwraca pełny kod HTML aktualnie otwartej strony.
+    Użyteczne do debugowania, gdy standardowe selektory zawodzą.
+    """
+    print("--- Narzędzie: Pobieram pełny kod HTML strony... ---")
+    return await self.page.content()
+Narzędzie 2: Listowanie interaktywnych elementów
+
+Gdy agent jest kompletnie zagubiony, może poprosić o listę "wszystkich klikalnych rzeczy", żeby znaleźć nowy punkt zaczepienia.
+
+Python
+
+# TĘ METODĘ RÓWNIEŻ DODAJESZ WEWNĄTRZ KLASY SandboxedBrowser
+
+async def list_interactive_elements(self) -> str:
+    """
+    Zwraca listę wszystkich interaktywnych elementów (linków i przycisków)
+    na stronie, wraz z ich tekstem i selektorami.
+    """
+    print("--- Narzędzie: Listuję wszystkie interaktywne elementy... ---")
+    elements = await self.page.eval_on_selector_all("a, button", """
+        (elements) => elements.map(el => ({
+            tag: el.tagName.toLowerCase(),
+            text: el.innerText.trim(),
+            selector: el.getAttribute('href') || `#${el.getAttribute('id')}`
+        }))
+    """)
+    # Usuwamy duplikaty i puste elementy
+    unique_elements = [dict(t) for t in {tuple(d.items()) for d in elements if d['text']}]
+    return f"Oto znalezione elementy interaktywne: {unique_elements}"
+Krok 7.3: Implementacja Pętli ReAct – Przebudowa Logiki Głównej
+To największa zmiana. Zamiast prostego wywołania agent.arun(), zbudujemy własną pętlę, która będzie zarządzać całym procesem rozumowania i działania. Będziemy potrzebować do tego trochę bardziej zaawansowanej interakcji z biblioteką Smol Agents, w szczególności z jej modelem Planner.
+
+Poniżej znajduje się kompletny, zaktualizowany kod pliku scraper_agent.py. Zwróć szczególną uwagę na nową funkcję run_react_loop oraz zmiany w funkcji main.
+
+Python
+
+# PEŁNY, ZAKTUALIZOWANY KOD PLIKU scraper_agent.py
+
+import os
+import asyncio
+import json
+from e2b import Sandbox
+from playwright.async_api import async_playwright, Page
+from twocaptcha import TwoCaptcha
+from smol_agents import Agent, Planner
+from bs4 import BeautifulSoup
+
+# === KROK 1: Konfiguracja (bez zmian) ===
+E2B_API_KEY = os.getenv("E2B_API_KEY")
+TWOCAPTCHA_API_KEY = os.getenv("TWOCAPTCHA_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+PROXY_CONFIG = {
+    "server": os.getenv("PROXY_SERVER", "http://twoj_host_proxy:port"),
+    "username": os.getenv("PROXY_USERNAME", "twoj_uzytkownik"),
+    "password": os.getenv("PROXY_PASSWORD", "twoje_haslo_proxy")
+}
+
+# === KROK 2: Klasa Zarządzająca (z nowymi narzędziami) ===
+class SandboxedBrowser:
+    def __init__(self, use_proxy: bool = False):
+        self.sandbox: Sandbox | None = None
+        self.page: Page | None = None
+        self.use_proxy = use_proxy
+        self.captcha_solver = TwoCaptcha(TWOCAPTCHA_API_KEY)
+
+    async def start(self):
+        print(f"--- Inicjalizacja: Uruchamiam sandbox... ---")
+        self.sandbox = await Sandbox.create(template="base", api_key=E2B_API_KEY)
+        
+        print("--- Inicjalizacja: Instaluję zależności... ---")
+        await self.sandbox.process.start_and_wait(
+            "apt-get update && apt-get install -y libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libatspi2.0-0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libxkbcommon0 libpango-1.0-0 libcairo2 libasound2"
+        )
+        await self.sandbox.process.start_and_wait("pip install playwright beautifulsoup4 && playwright install chrome")
+        
+        print("--- Inicjalizacja: Uruchamiam przeglądarkę... ---")
+        browser_args = ['--headless=new']
+        if self.use_proxy:
+            browser_args.append(f"--proxy-server={PROXY_CONFIG['server']}")
+        
+        self.playwright = await async_playwright().start()
+        self.browser = await self.playwright.chromium.launch(headless=True, args=browser_args)
+        
+        context = await self.browser.new_context()
+        if self.use_proxy and PROXY_CONFIG['username']:
+            await context.set_http_credentials({ 'username': PROXY_CONFIG['username'], 'password': PROXY_CONFIG['password'] })
+
+        self.page = await context.new_page()
+        print("--- Inicjalizacja: Gotowy do pracy! ---")
+
+    async def close(self):
+        print("--- Zamykanie: Sprzątam po sobie... ---")
+        if hasattr(self, 'browser') and self.browser: await self.browser.close()
+        if hasattr(self, 'playwright') and self.playwright: await self.playwright.stop()
+        if self.sandbox: await self.sandbox.close()
+        print("--- Zamykanie: Sesja zakończona. ---")
+
+    # --- Narzędzia Agenta ---
+    async def navigate(self, url: str) -> str:
+        """Nawiguje do podanego adresu URL."""
+        print(f"--- Narzędzie: Nawiguję do {url} ---")
+        await self.page.goto(url, wait_until='domcontentloaded')
+        return f"Pomyślnie przeniesiono na stronę: {url}"
+
+    async def click_element(self, selector: str) -> str:
+        """Klika na element na stronie używając selektora CSS."""
+        print(f"--- Narzędzie: Klikam w element '{selector}' ---")
+        try:
+            await self.page.click(selector, timeout=5000)
+            return f"Pomyślnie kliknięto w element '{selector}'."
+        except Exception as e:
+            return f"BŁĄD: Nie udało się kliknąć w element '{selector}'. Powód: {e}"
+
+    async def fill_input(self, selector: str, text: str) -> str:
+        """Wypełnia pole tekstowe na stronie."""
+        print(f"--- Narzędzie: Wypełniam pole '{selector}' tekstem '{text}' ---")
+        await self.page.fill(selector, text)
+        return f"Pomyślnie wypełniono pole '{selector}'."
+
+    async def get_content(self) -> str:
+        """Pobiera i zwraca całą treść tekstową aktualnej strony."""
+        print("--- Narzędzie: Pobieram treść strony... ---")
+        content_html = await self.page.content()
+        await self.sandbox.filesystem.write("/tmp/page.html", content_html)
+        script = """
+from bs4 import BeautifulSoup
+with open('/tmp/page.html', 'r', encoding='utf-8') as f:
+    soup = BeautifulSoup(f, 'html.parser')
+    for item in soup(["script", "style"]): item.extract()
+    print(soup.get_text(separator=' ', strip=True))
+"""
+        proc = await self.sandbox.process.start_and_wait(f"python -c \"{script}\"")
+        return f"Oto treść strony: {proc.stdout}"
+
+    async def save_text_to_file(self, filename: str, content: str) -> str:
+        """Zapisuje podany tekst (content) do pliku o podanej nazwie (filename)."""
+        print(f"--- Narzędzie: Zapisuję dane do pliku '{filename}'... ---")
+        await self.sandbox.filesystem.write(filename, content)
+        return f"Pomyślnie zapisano dane w pliku '{filename}'."
+
+    async def download_file_from_sandbox(self, filename: str) -> str:
+        """Pobiera plik o podanej nazwie (filename) z sandboksu na dysk lokalny."""
+        print(f"--- Narzędzie: Pobieram plik '{filename}'... ---")
+        file_content_bytes = await self.sandbox.filesystem.read_bytes(filename)
+        with open(filename, "wb") as f: f.write(file_content_bytes)
+        return f"Pomyślnie pobrano plik '{filename}'."
+
+    # NOWE NARZĘDZIA DODANE W TYM ROZDZIALE
+    async def get_page_html(self) -> str:
+        """Zwraca pełny kod HTML aktualnie otwartej strony."""
+        print("--- Narzędzie: Pobieram pełny kod HTML strony... ---")
+        return await self.page.content()
+
+    async def list_interactive_elements(self) -> str:
+        """Zwraca listę wszystkich interaktywnych elementów (linków i przycisków)."""
+        print("--- Narzędzie: Listuję wszystkie interaktywne elementy... ---")
+        elements = await self.page.eval_on_selector_all("a, button", """
+            (elements) => elements.filter(el => el.innerText.trim()).map(el => ({
+                tag: el.tagName.toLowerCase(),
+                text: el.innerText.trim(),
+                selector: el.getAttribute('href') ? `a[href="${el.getAttribute('href')}"]` : `#${el.getAttribute('id')}`
+            }))
+        """)
+        unique_elements = [dict(t) for t in {tuple(d.items()) for d in elements}]
+        return f"Oto znalezione elementy interaktywne: {json.dumps(unique_elements, indent=2)}"
+
+
+# === KROK 3: Pętla ReAct ===
+async def run_react_loop(agent: Agent, browser_session: SandboxedBrowser, initial_prompt: str):
+    """Główna pętla ReAct, która zarządza pracą agenta."""
+    max_iterations = 10
+    prompt = initial_prompt
+
+    for i in range(max_iterations):
+        print(f"\n--- 🤔 ITERACJA {i + 1}/{max_iterations} ---")
+        
+        # 1. MYŚL I DZIAŁANIE (Reason & Act)
+        # Prosimy LLM o wygenerowanie planu w postaci Myśli i Działania
+        response_json = await agent.planner.get_plan(prompt)
+        
+        try:
+            thought = response_json.get("thought")
+            action_name = response_json.get("action")
+            action_params = response_json.get("params", {})
+            
+            print(f"💬 Myśl: {thought}")
+            print(f"🎬 Działanie: {action_name} z parametrami {action_params}")
+            
+            # Specjalny warunek końcowy
+            if action_name == "finish":
+                print("\n--- ✅ ZADANIE ZAKOŃCZONE ---")
+                print(f"Ostateczna odpowiedź: {action_params.get('answer', 'Brak odpowiedzi.')}")
+                return
+            
+            # 2. OBSERWACJA (Observation)
+            # Znajdujemy i wykonujemy odpowiednie narzędzie
+            tool_to_execute = next((t for t in agent.tools if t.__name__ == action_name), None)
+            
+            if tool_to_execute:
+                observation = await tool_to_execute(**action_params)
+            else:
+                observation = f"BŁĄD: Nie znaleziono narzędzia o nazwie '{action_name}'."
+                
+            print(f"👀 Obserwacja: {observation[:300]}...") # Drukujemy tylko fragment długich obserwacji
+            
+            # 3. AKTUALIZACJA PROMPTU
+            # Przygotowujemy nowy prompt dla kolejnej iteracji, dodając wynik ostatniego działania
+            prompt += f"\nThought: {thought}\nAction: {{\"action\": \"{action_name}\", \"params\": {action_params}}}\nObservation: {observation}"
+
+        except Exception as e:
+            print(f"BŁĄD KRYTYCZNY W PĘTLI: {e}")
+            prompt += f"\nObservation: Wystąpił błąd w pętli. Spróbuj inaczej. Błąd: {e}"
+
+    print("\n---  osiągnięto limit iteracji ---")
+
+# === KROK 4: Główny Dyrygent ===
+async def main():
+    browser_session = SandboxedBrowser(use_proxy=False)
+    try:
+        await browser_session.start()
+        
+        # Agent jest teraz zdefiniowany bez narzędzia 'finish', ponieważ jest ono obsługiwane w pętli
+        agent = Agent(
+            name="AgentMyśliciel",
+            description="Zaawansowany agent, który potrafi dynamicznie planować i korygować swoje działania w celu wykonania złożonych zadań w przeglądarce.",
+            model="gpt-4-turbo",
+            tools=[
+                browser_session.navigate, browser_session.click_element,
+                browser_session.fill_input, browser_session.get_content,
+                browser_session.save_text_to_file, browser_session.download_file_from_sandbox,
+                browser_session.get_page_html, browser_session.list_interactive_elements
+            ],
+            api_key=OPENAI_API_KEY
+        )
+        
+        # Nowe, bardziej złożone zadanie, które symuluje błąd
+        zadanie = """
+        Twoim celem jest znalezienie wszystkich cytatów autorstwa 'J.K. Rowling' na stronie 'http://quotes.toscrape.com/'.
+        Jednakże, programista popełnił błąd i przycisk do przejścia na następną stronę nie ma selektora '#next_button', jak można by się spodziewać.
+        Twoim zadaniem jest wejść na stronę, spróbować kliknąć nieistniejący przycisk, zdiagnozować problem, znaleźć poprawny sposób nawigacji
+        (np. klikając w link z tekstem 'Next →') i kontynuować scraping, aż znajdziesz cytaty lub sprawdzisz wszystkie strony.
+        Na koniec, zapisz znalezione cytaty do pliku 'rowling.txt' i pobierz go. Jeśli nie znajdziesz żadnych cytatów, poinformuj o tym w pliku.
+        Zakończ zadanie wywołując akcję 'finish' z ostateczną odpowiedzią.
+        """
+        print(f"\n--- Zlecenie dla Agenta: {zadanie} ---\n")
+        
+        await run_react_loop(agent, browser_session, zadanie)
+
+    except Exception as e:
+        print(f"Wystąpił nieoczekiwany błąd główny: {e}")
+    finally:
+        await browser_session.close()
+
+if __name__ == "__main__":
+    if not all([OPENAI_API_KEY, E2B_API_KEY]):
+        print("BŁĄD: Brak kluczy API. Ustaw je jako zmienne środowiskowe!")
+    else:
+        asyncio.run(main())
+Omówienie Kluczowych Zmian
+Nowe Narzędzia Diagnostyczne: get_page_html i list_interactive_elements dają agentowi "oczy i uszy" do zbadania otoczenia, gdy jego plan zawiedzie. Zwróć uwagę, że w list_interactive_elements staramy się od razu budować użyteczne selektory, co ułatwi agentowi pracę.
+Nowa funkcja run_react_loop: To jest serce naszego nowego agenta. To ona, a nie biblioteka, zarządza teraz cyklem życia zadania.
+agent.planner.get_plan(prompt): Zamiast agent.arun(), używamy teraz niskopoziomowego dostępu do plannera agenta, aby uzyskać tylko JEDEN następny krok (myśl i działanie).
+Pętla for: Ogranicza maksymalną liczbę kroków, aby agent nie wpadł w nieskończoną pętlę i nie nabił nam rachunku za API.
+Obsługa finish: Dodaliśmy specjalne działanie finish, które agent musi wywołać, aby poprawnie zakończyć zadanie. Daje nam to kontrolę nad tym, kiedy praca jest uznana za skończoną.
+Aktualizacja prompt: To najważniejsza część pętli. Po każdej akcji doklejamy do oryginalnego promptu historię (Myśl, Działanie, Obserwacja). Dzięki temu w kolejnej iteracji LLM ma pełen kontekst tego, co właśnie się wydarzyło i może podjąć świadomą decyzję.
+Nowe Zadanie w main: Zadanie jest teraz znacznie bardziej opisowe. Symulujemy w nim problem (nieistniejący selektor) i wprost instruujemy agenta, że jego zadaniem jest zdiagnozowanie i poradzenie sobie z tą sytuacją. To uczy go elastyczności.
+Uruchomienie i Obserwacja Myślenia
+Uruchom skrypt tak jak poprzednio:
+python scraper_agent.py
+
+Tym razem obserwuj uważnie logi w terminalu. Zobaczysz wyraźny cykl:
+
+ITERACJA 1: Agent pomyśli: "Ok, muszę wejść na stronę" i wykona Maps.
+ITERACJA 2: Pomyśli: "Teraz muszę znaleźć przycisk 'Next'. Spróbuję #next_button" i wykona click_element('#next_button').
+Obserwacja będzie brzmiała: "BŁĄD: Nie udało się kliknąć...".
+ITERACJA 3: Agent otrzyma tę obserwację i pomyśli: "Aha, ten selektor nie działa. Muszę zbadać stronę. Użyję list_interactive_elements".
+Obserwacja z tego narzędzia pokaże mu listę linków, w tym ten z tekstem "Next →".
+ITERACJA 4: Agent pomyśli: "OK, poprawny link to ten z tekstem 'Next →'. Klikam w niego" i wykona click_element z poprawnym selektorem.
+To jest właśnie samokorekta w działaniu!
+
+Gratulacje! Twój agent przestał być tylko wykonawcą. Stał się myślicielem, który potrafi adaptować się do zmieniającego się środowiska – a to jest krok milowy na drodze do prawdziwie autonomicznej sztucznej inteligencji.

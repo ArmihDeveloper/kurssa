@@ -1,0 +1,419 @@
+Doskonale. Czas założyć naszemu agentowi cyfrową pelerynę-niewidkę i wyposażyć go w zestaw wytrychów do najtrudniejszych zamków w internecie. Ten rozdział przeniesie jego umiejętności scrapingu z poziomu zaawansowanego na poziom ekspercki.
+
+Oto kompletny, rozbudowany Rozdział 8, gotowy do zaimplementowania.
+
+Rozdział 8: Zaawansowane Techniki Scrapingu – Niewidzialność i Dynamiczna Treść
+Wprowadzenie
+Nasz agent jest już inteligentny. Potrafi planować, korygować błędy i zapisywać wyniki. Jednak współczesny internet to pole minowe dla botów. Strony internetowe, zwłaszcza te duże, aktywnie bronią się przed automatyzacją, a ich skomplikowana, dynamiczna budowa stanowi kolejne wyzwanie.
+
+W tym rozdziale wyposażymy naszego agenta w zestaw zaawansowanych technik, które pozwolą mu działać dyskretniej i skuteczniej na najtrudniejszych stronach. Nauczymy go cierpliwości w oczekiwaniu na treść, ukrywania swojej tożsamości, zaglądania do "ukrytych światów" w ramkach iframe oraz bezpośredniego manipulowania stroną za pomocą JavaScriptu. Po tym rozdziale niewiele stron będzie w stanie mu się oprzeć.
+
+Krok 8.1: Cierpliwość Agenta – Jak Radzić Sobie z Dynamiczną Treścią
+Problem: Wiele nowoczesnych stron (tzw. Single Page Applications) nie ładuje całej treści od razu. Klikasz link, a treść pojawia się z opóźnieniem, dociągana w tle. Nasz agent, działając z prędkością maszyny, często próbuje znaleźć element, który jeszcze nie zdążył się załadować, co prowadzi do błędu.
+
+Rozwiązanie: Musimy nauczyć agenta czekać. Zamiast zakładać, że coś jest na stronie od razu, damy mu narzędzie do aktywnego oczekiwania na pojawienie się konkretnych elementów.
+
+Implementacja:
+Dodajmy nową metodę do naszej klasy SandboxedBrowser.
+
+Python
+
+# TĘ METODĘ DODAJESZ WEWNĄTRZ KLASY SandboxedBrowser
+
+async def wait_for_element(self, selector: str, timeout: int = 10) -> str:
+    """
+    Czeka na pojawienie się elementu pasującego do selektora na stronie.
+    Przydatne na stronach, które dynamicznie ładują treść.
+    :param selector: Selektor CSS elementu, na który należy czekać.
+    :param timeout: Maksymalny czas oczekiwania w sekundach.
+    """
+    print(f"--- Narzędzie: Czekam na element '{selector}' (max {timeout}s)... ---")
+    try:
+        # Konwertujemy sekundy na milisekundy dla Playwright
+        timeout_ms = timeout * 1000
+        element = self.page.locator(selector)
+        await element.wait_for(state='visible', timeout=timeout_ms)
+        return f"Element '{selector}' jest już widoczny na stronie."
+    except Exception as e:
+        return f"BŁĄD: Element '{selector}' nie pojawił się w ciągu {timeout} sekund. Powód: {e}"
+Krok 8.2: Peleryna Niewidka – Rotacja User-Agent
+Problem: Każda przeglądarka, łącząc się ze stroną, wysyła swój "dowód osobisty" zwany User-Agent. Domyślny User-Agent Playwrighta krzyczy "JESTEM BOTEM!". Wiele systemów antybotowych blokuje takie połączenia od razu.
+
+Rozwiązanie: Będziemy udawać zwykłego użytkownika, losując User-Agent prawdziwej, popularnej przeglądarki przy każdym uruchomieniu agenta.
+
+Implementacja:
+
+Na początku pliku scraper_agent.py, zaraz po importach, dodaj listę z User-Agentami i zaimportuj bibliotekę random.
+
+Python
+
+import random # Dodaj ten import na górze pliku
+
+# ... istniejące importy
+
+# Lista popularnych User-Agentów do losowania
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/117.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
+]
+Następnie, w klasie SandboxedBrowser, zmodyfikuj metodę start, aby używała losowego User-Agenta przy tworzeniu kontekstu przeglądarki.
+
+Python
+
+# WEWNĄTRZ KLASY SandboxedBrowser, ZMIEŃ METODĘ 'start'
+
+async def start(self):
+    # ... (kod uruchamiania sandboksu i instalacji bez zmian) ...
+
+    print("--- Inicjalizacja: Uruchamiam przeglądarkę z losowym User-Agentem... ---")
+    browser_args = ['--headless=new']
+    if self.use_proxy:
+        browser_args.append(f"--proxy-server={PROXY_CONFIG['server']}")
+
+    self.playwright = await async_playwright().start()
+    self.browser = await self.playwright.chromium.launch(headless=True, args=browser_args)
+
+    # === TUTAJ ZACHODZI ZMIANA ===
+    # Tworzymy kontekst z losowym User-Agentem
+    context = await self.browser.new_context(
+        user_agent=random.choice(USER_AGENTS)
+    )
+    # ============================
+
+    if self.use_proxy and PROXY_CONFIG['username']:
+        await context.set_http_credentials({ 'username': PROXY_CONFIG['username'], 'password': PROXY_CONFIG['password'] })
+
+    self.page = await context.new_page()
+    print("--- Inicjalizacja: Gotowy do pracy! ---")
+Krok 8.3: Świat w Świecie – Interakcja z Ramkami <iframe>
+Problem: Często kluczowe elementy strony, takie jak formularze logowania, panele płatności, a nawet zgody na ciasteczka, są umieszczone w ramce <iframe>. To w praktyce osobna strona wewnątrz strony. Nasze dotychczasowe narzędzia nie potrafią do niej zajrzeć.
+
+Rozwiązanie: Stworzymy nowe, wyspecjalizowane narzędzia, które najpierw "wejdą" do ramki, a dopiero potem wykonają w niej akcję.
+
+Implementacja:
+Dodaj dwie nowe metody do klasy SandboxedBrowser.
+
+Python
+
+# TE METODY DODAJESZ WEWNĄTRZ KLASY SandboxedBrowser
+
+async def click_element_in_iframe(self, iframe_selector: str, element_selector: str) -> str:
+    """
+    Klika w element, który znajduje się wewnątrz ramki iframe.
+    :param iframe_selector: Selektor CSS ramki iframe.
+    :param element_selector: Selektor CSS elementu wewnątrz tej ramki.
+    """
+    print(f"--- Narzędzie: Szukam ramki '{iframe_selector}', by kliknąć w '{element_selector}'... ---")
+    try:
+        # Najpierw lokalizujemy ramkę, a potem szukamy elementu w jej kontekście
+        frame = self.page.frame_locator(iframe_selector)
+        await frame.locator(element_selector).click(timeout=5000)
+        return f"Pomyślnie kliknięto w element '{element_selector}' wewnątrz ramki '{iframe_selector}'."
+    except Exception as e:
+        return f"BŁĄD: Nie udało się kliknąć w element w ramce. Powód: {e}"
+
+async def fill_input_in_iframe(self, iframe_selector: str, element_selector: str, text: str) -> str:
+    """
+    Wypełnia pole tekstowe, które znajduje się wewnątrz ramki iframe.
+    """
+    print(f"--- Narzędzie: Szukam ramki '{iframe_selector}', by wypełnić pole '{element_selector}'... ---")
+    try:
+        frame = self.page.frame_locator(iframe_selector)
+        await frame.locator(element_selector).fill(text)
+        return f"Pomyślnie wypełniono pole '{element_selector}' w ramce."
+    except Exception as e:
+        return f"BŁĄD: Nie udało się wypełnić pola w ramce. Powód: {e}"
+Krok 8.4: Magiczna Różdżka – Wykonywanie JavaScriptu
+Problem: Czasami interakcja z elementem jest trudna, dane są ukryte, a selektory CSS nie wystarczają. Potrzebujemy narzędzia ostatecznego.
+
+Rozwiązanie: Damy agentowi możliwość bezpośredniego wykonania dowolnego kodu JavaScript na stronie. To potężne, ale i niebezpieczne narzędzie – jak magiczna różdżka, która może zdziałać cuda lub wybuchnąć w rękach.
+
+Implementacja:
+Dodaj tę metodę do klasy SandboxedBrowser.
+
+Python
+
+# TĘ METODĘ DODAJESZ WEWNĄTRZ KLASY SandboxedBrowser
+
+async def execute_javascript(self, script: str) -> str:
+    """
+    Wykonuje dowolny kod JavaScript na stronie i zwraca wynik.
+    Używaj ostrożnie. Zwracany wynik musi być serializowalny (np. string, liczba, lista).
+    Przykład: 'return document.title' lub 'document.body.style.backgroundColor = "red"'.
+    """
+    print(f"--- Narzędzie: Wykonuję skrypt JS: '{script[:50]}...' ---")
+    try:
+        result = await self.page.evaluate(script)
+        return f"Pomyślnie wykonano skrypt JS. Zwrócony wynik: {result}"
+    except Exception as e:
+        return f"BŁĄD: Wykonanie skryptu JS nie powiodło się. Powód: {e}"
+Krok 8.5: Integracja Kodu – Pełna, Ulepszona Wersja Agenta
+Czas połączyć wszystkie te elementy w całość. Poniżej znajduje się kompletna, ostateczna wersja pliku scraper_agent.py na tym etapie kursu. Zawiera wszystkie nowe narzędzia i zmodyfikowaną logikę.
+
+Python
+
+# PEŁNY, ZAKTUALIZOWANY KOD PLIKU scraper_agent.py
+
+import os
+import asyncio
+import json
+import random
+from e2b import Sandbox
+from playwright.async_api import async_playwright, Page
+from twocaptcha import TwoCaptcha
+from smol_agents import Agent, Planner
+from bs4 import BeautifulSoup
+
+# Lista popularnych User-Agentów do losowania
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/117.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Safari/605.1.15",
+]
+
+# Konfiguracja
+E2B_API_KEY = os.getenv("E2B_API_KEY")
+TWOCAPTCHA_API_KEY = os.getenv("TWOCAPTCHA_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+PROXY_CONFIG = { "server": os.getenv("PROXY_SERVER"), "username": os.getenv("PROXY_USERNAME"), "password": os.getenv("PROXY_PASSWORD") }
+
+class SandboxedBrowser:
+    def __init__(self, use_proxy: bool = False):
+        self.use_proxy = use_proxy
+        # ... reszta __init__ bez zmian ...
+        self.sandbox: Sandbox | None = None
+        self.page: Page | None = None
+        self.captcha_solver = TwoCaptcha(TWOCAPTCHA_API_KEY)
+
+
+    async def start(self):
+        print(f"--- Inicjalizacja: Uruchamiam sandbox... ---")
+        self.sandbox = await Sandbox.create(template="base", api_key=E2B_API_KEY)
+        
+        print("--- Inicjalizacja: Instaluję zależności... ---")
+        await self.sandbox.process.start_and_wait("apt-get update && apt-get install -y libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libatspi2.0-0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libxkbcommon0 libpango-1.0-0 libcairo2 libasound2")
+        await self.sandbox.process.start_and_wait("pip install playwright beautifulsoup4 && playwright install chrome")
+        
+        print("--- Inicjalizacja: Uruchamiam przeglądarkę z losowym User-Agentem... ---")
+        browser_args = ['--headless=new']
+        if self.use_proxy and PROXY_CONFIG['server']:
+            browser_args.append(f"--proxy-server={PROXY_CONFIG['server']}")
+        
+        self.playwright = await async_playwright().start()
+        self.browser = await self.playwright.chromium.launch(headless=True, args=browser_args)
+        
+        context = await self.browser.new_context(user_agent=random.choice(USER_AGENTS))
+        if self.use_proxy and PROXY_CONFIG['username']:
+            await context.set_http_credentials({ 'username': PROXY_CONFIG['username'], 'password': PROXY_CONFIG['password'] })
+        self.page = await context.new_page()
+        print("--- Inicjalizacja: Gotowy do pracy! ---")
+
+    async def close(self):
+        print("--- Zamykanie: Sprzątam po sobie... ---")
+        if hasattr(self, 'browser') and self.browser: await self.browser.close()
+        if hasattr(self, 'playwright') and self.playwright: await self.playwright.stop()
+        if self.sandbox: await self.sandbox.close()
+        print("--- Zamykanie: Sesja zakończona. ---")
+
+    # --- Narzędzia Agenta (wszystkie poprzednie + nowe) ---
+    async def navigate(self, url: str) -> str:
+        """Nawiguje do podanego adresu URL."""
+        print(f"--- Narzędzie: Nawiguję do {url} ---")
+        await self.page.goto(url, wait_until='domcontentloaded')
+        return f"Pomyślnie przeniesiono na stronę: {url}"
+
+    async def wait_for_element(self, selector: str, timeout: int = 10) -> str:
+        """Czeka, aż element pojawi się na stronie."""
+        print(f"--- Narzędzie: Czekam na element '{selector}' (max {timeout}s)... ---")
+        try:
+            await self.page.locator(selector).wait_for(state='visible', timeout=timeout * 1000)
+            return f"Element '{selector}' jest widoczny."
+        except Exception as e:
+            return f"BŁĄD: Element '{selector}' nie pojawił się w ciągu {timeout}s."
+
+    async def click_element(self, selector: str) -> str:
+        """Klika na element na stronie używając selektora CSS."""
+        print(f"--- Narzędzie: Klikam w element '{selector}' ---")
+        try:
+            await self.page.locator(selector).click(timeout=5000)
+            return f"Pomyślnie kliknięto w element '{selector}'."
+        except Exception as e:
+            return f"BŁĄD: Nie udało się kliknąć w element '{selector}'. Powód: {str(e)}"
+
+    async def click_element_in_iframe(self, iframe_selector: str, element_selector: str) -> str:
+        """Klika w element, który znajduje się wewnątrz ramki iframe."""
+        print(f"--- Narzędzie: Szukam ramki '{iframe_selector}', by kliknąć w '{element_selector}'... ---")
+        try:
+            await self.page.frame_locator(iframe_selector).locator(element_selector).click(timeout=5000)
+            return f"Pomyślnie kliknięto w element '{element_selector}' w ramce."
+        except Exception as e:
+            return f"BŁĄD: Nie udało się kliknąć w element w ramce. Powód: {str(e)}"
+    
+    async def fill_input(self, selector: str, text: str) -> str:
+        """Wypełnia pole tekstowe na stronie."""
+        print(f"--- Narzędzie: Wypełniam pole '{selector}' tekstem '{text}' ---")
+        await self.page.fill(selector, text)
+        return f"Pomyślnie wypełniono pole '{selector}'."
+
+    async def fill_input_in_iframe(self, iframe_selector: str, element_selector: str, text: str) -> str:
+        """Wypełnia pole tekstowe, które znajduje się wewnątrz ramki iframe."""
+        print(f"--- Narzędzie: Szukam ramki '{iframe_selector}', by wypełnić pole '{element_selector}'... ---")
+        try:
+            await self.page.frame_locator(iframe_selector).locator(element_selector).fill(text)
+            return f"Pomyślnie wypełniono pole '{element_selector}' w ramce."
+        except Exception as e:
+            return f"BŁĄD: Nie udało się wypełnić pola w ramce. Powód: {str(e)}"
+
+    async def execute_javascript(self, script: str) -> str:
+        """Wykonuje dowolny kod JavaScript na stronie i zwraca wynik."""
+        print(f"--- Narzędzie: Wykonuję skrypt JS: '{script[:50]}...' ---")
+        try:
+            result = await self.page.evaluate(script)
+            return f"Pomyślnie wykonano skrypt JS. Zwrócony wynik: {json.dumps(result)}"
+        except Exception as e:
+            return f"BŁĄD: Wykonanie skryptu JS nie powiodło się. Powód: {str(e)}"
+    
+    # ... i wszystkie pozostałe narzędzia: get_content, save_text_to_file, download_file_from_sandbox, get_page_html, list_interactive_elements ...
+    async def get_content(self) -> str:
+        """Pobiera i zwraca całą treść tekstową aktualnej strony."""
+        print("--- Narzędzie: Pobieram treść strony... ---")
+        content_html = await self.page.content()
+        await self.sandbox.filesystem.write("/tmp/page.html", content_html)
+        script = """
+from bs4 import BeautifulSoup
+with open('/tmp/page.html', 'r', encoding='utf-8') as f:
+    soup = BeautifulSoup(f, 'html.parser')
+    for item in soup(["script", "style"]): item.extract()
+    print(soup.get_text(separator=' ', strip=True))
+"""
+        proc = await self.sandbox.process.start_and_wait(f"python -c \"{script}\"")
+        return f"Oto treść strony: {proc.stdout}"
+
+    async def save_text_to_file(self, filename: str, content: str) -> str:
+        """Zapisuje podany tekst (content) do pliku o podanej nazwie (filename)."""
+        print(f"--- Narzędzie: Zapisuję dane do pliku '{filename}'... ---")
+        await self.sandbox.filesystem.write(filename, content)
+        return f"Pomyślnie zapisano dane w pliku '{filename}'."
+
+    async def download_file_from_sandbox(self, filename: str) -> str:
+        """Pobiera plik o podanej nazwie (filename) z sandboksu na dysk lokalny."""
+        print(f"--- Narzędzie: Pobieram plik '{filename}'... ---")
+        file_content_bytes = await self.sandbox.filesystem.read_bytes(filename)
+        with open(filename, "wb") as f: f.write(file_content_bytes)
+        return f"Pomyślnie pobrano plik '{filename}'."
+
+    async def get_page_html(self) -> str:
+        """Zwraca pełny kod HTML aktualnie otwartej strony."""
+        print("--- Narzędzie: Pobieram pełny kod HTML strony... ---")
+        return await self.page.content()
+
+    async def list_interactive_elements(self) -> str:
+        """Zwraca listę wszystkich interaktywnych elementów (linków i przycisków)."""
+        print("--- Narzędzie: Listuję wszystkie interaktywne elementy... ---")
+        elements = await self.page.eval_on_selector_all("a, button", """
+            (elements) => elements.filter(el => el.innerText.trim()).map(el => ({
+                tag: el.tagName.toLowerCase(),
+                text: el.innerText.trim(),
+                selector: el.getAttribute('href') ? `a[href="${el.getAttribute('href')}"]` : `#${el.getAttribute('id')}`
+            }))
+        """)
+        unique_elements = [dict(t) for t in {tuple(d.items()) for d in elements}]
+        return f"Oto znalezione elementy interaktywne: {json.dumps(unique_elements, indent=2)}"
+
+
+# Pętla ReAct (bez zmian)
+async def run_react_loop(agent: Agent, browser_session: SandboxedBrowser, initial_prompt: str):
+    max_iterations = 15 # Dajemy trochę więcej iteracji na złożone zadania
+    prompt = initial_prompt
+    for i in range(max_iterations):
+        print(f"\n--- 🤔 ITERACJA {i + 1}/{max_iterations} ---")
+        try:
+            response_json = await agent.planner.get_plan(prompt)
+            thought = response_json.get("thought")
+            action_name = response_json.get("action")
+            action_params = response_json.get("params", {})
+            print(f"💬 Myśl: {thought}")
+            print(f"🎬 Działanie: {action_name} z parametrami {action_params}")
+            if action_name == "finish":
+                print("\n--- ✅ ZADANIE ZAKOŃCZONE ---")
+                print(f"Ostateczna odpowiedź: {action_params.get('answer', 'Brak odpowiedzi.')}")
+                return
+            tool_to_execute = next((t for t in agent.tools if t.__name__ == action_name), None)
+            if tool_to_execute:
+                observation = await tool_to_execute(**action_params)
+            else:
+                observation = f"BŁĄD: Nie znaleziono narzędzia o nazwie '{action_name}'."
+            print(f"👀 Obserwacja: {observation[:300]}...")
+            prompt += f"\nThought: {thought}\nAction: {{\"action\": \"{action_name}\", \"params\": {action_params}}}\nObservation: {observation}"
+        except Exception as e:
+            print(f"BŁĄD KRYTYCZNY W PĘTLI: {e}")
+            prompt += f"\nObservation: Wystąpił błąd. Spróbuj inaczej. Błąd: {e}"
+    print("\n---  достигнут лимит итераций ---")
+
+
+async def main():
+    browser_session = SandboxedBrowser()
+    try:
+        await browser_session.start()
+        
+        agent = Agent(
+            name="AgentSpecjalista",
+            description="Super-zaawansowany agent do web scrapingu, który potrafi obsługiwać dynamiczne strony, ramki iframe, rotację user-agent i wykonywanie JS.",
+            model="gpt-4-turbo",
+            tools=[
+                browser_session.navigate, browser_session.wait_for_element,
+                browser_session.click_element, browser_session.click_element_in_iframe,
+                browser_session.fill_input, browser_session.fill_input_in_iframe,
+                browser_session.execute_javascript, browser_session.get_content, 
+                browser_session.save_text_to_file, browser_session.download_file_from_sandbox,
+                browser_session.get_page_html, browser_session.list_interactive_elements
+            ],
+            api_key=OPENAI_API_KEY
+        )
+        
+        # Nowe zadanie, które wymaga zaawansowanych technik
+        zadanie = """
+        Twoim zadaniem jest wejść na stronę 'https://www.w3schools.com/tags/tryit.asp?filename=tryhtml_iframe'.
+        Ta strona zawiera ramkę iframe. Twoim celem jest zmiana treści wewnątrz tej ramki.
+        1. Poczekaj, aż ramka iframe z selektorem '#iframeResult' będzie widoczna.
+        2. Wewnątrz tej ramki znajduje się nagłówek 'h1'. Użyj JavaScript, aby zmienić jego treść na 'Agent AI was here!'.
+        3. Po zmianie, pobierz całą treść tekstową z wnętrza ramki iframe, aby potwierdzić, że zmiana się udała.
+        4. Zapisz potwierdzenie w pliku 'w3schools_report.txt'.
+        5. Pobierz ten plik.
+        6. Zakończ zadanie akcją 'finish'.
+        """
+        print(f"\n--- Zlecenie dla Agenta: {zadanie} ---\n")
+        
+        await run_react_loop(agent, browser_session, zadanie)
+
+    except Exception as e:
+        print(f"Wystąpił nieoczekiwany błąd główny: {e}")
+    finally:
+        await browser_session.close()
+
+if __name__ == "__main__":
+    if not all([OPENAI_API_KEY, E2B_API_KEY]):
+        print("BŁĄD: Brak kluczy API.")
+    else:
+        asyncio.run(main())
+
+Podsumowanie i Uruchomienie
+Udało nam się zaimplementować potężny zestaw technik, które czynią naszego agenta prawdziwym specjalistą od web scrapingu.
+
+Co zyskaliśmy?
+
+Cierpliwość: Agent nie poddaje się na stronach, które wolno ładują treść.
+Niewidzialność: Udając prawdziwą przeglądarkę, ma większe szanse na ominięcie podstawowych systemów antybotowych.
+Głębszy dostęp: Potrafi operować na skomplikowanych stronach z ramkami iframe.
+Pełną kontrolę: Dzięki możliwości wykonywania JavaScriptu może poradzić sobie z niemal każdym wyzwaniem.
+Jak to uruchomić?
+Tak jak poprzednio, upewnij się, że masz aktywne środowisko (venv) i ustawione klucze API. Następnie wykonaj:
+python scraper_agent.py
+
+Czego się spodziewać?
+Obserwuj logi. Zobaczysz, jak agent najpierw nawiguje na stronę, potem używa narzędzia wait_for_element (chociaż w tym przypadku ramka ładuje się szybko), a następnie wywołuje execute_javascript z odpowiednim kodem. Na koniec zapisze i pobierze plik z raportem. Po zakończeniu jego pracy w folderze projektu znajdziesz plik w3schools_report.txt z dowodem wykonania zadania.
+
+Twój agent jest teraz gotowy na niemal wszystko, co współczesny internet może mu rzucić pod nogi. Jedyne, co nas ogranicza, to koszt i wydajność – a tym zajmiemy się w następnym rozdziale

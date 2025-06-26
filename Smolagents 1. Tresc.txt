@@ -1,0 +1,173 @@
+Budowa Agentów AI z Wykorzystaniem Smol Agents (Wersja dla Kolegów)
+Wprowadzenie
+Siemanko! Skoro tu jesteś, to znaczy, że chcesz wejść w świat agentów AI. Super decyzja! W tym kursie, krok po kroku, bez owijania w bawełnę, pokażę Ci, jak tworzyć takie sprytne byty przy użyciu frameworka Smol Agents. Zapomnij o nudnych definicjach. Będziemy pisać kod, gadać o konkretach i budować coś, co faktycznie działa. Gotowy? No to jedziemy!
+
+Rozdział 1: O co w ogóle kaman z tymi Agentami AI?
+Słuchaj, pewnie słyszałeś o dużych modelach językowych, czyli LLM-ach, jak GPT od OpenAI czy Gemini od Google. Wyobraź sobie taki model jak gościa z encyklopedyczną wiedzą, ale zamkniętego w pokoju bez okien i drzwi. Możesz go o wszystko zapytać, a on ci odpowie na podstawie tego, co ma w głowie. Super sprawa, ale jego świat kończy się na wiedzy, na której go wytrenowano.
+
+A teraz wyobraź sobie, że dajesz temu gościowi klucze, telefon z dostępem do internetu i kartę kredytową. Nagle może on nie tylko odpowiadać na pytania, ale też zamawiać pizzę, rezerwować bilety do kina i sprawdzać pogodę w czasie rzeczywistym. I to jest właśnie agent AI.
+
+Krótko mówiąc, agent to LLM na sterydach. To mózg (LLM), który dostał ciało (narzędzia).
+
+Mózg (The Brain): To jest właśnie ten LLM. Jego zadaniem jest myślenie, planowanie i podejmowanie decyzji. Kiedy zadajesz mu pytanie: "Jaka jest dziś pogoda w Gdańsku i czy powinienem wziąć parasol?", jego mózg analizuje to i dochodzi do wniosku: "Aha, muszę najpierw sprawdzić pogodę w Gdańsku, a potem na podstawie wyniku (np. deszcz) zadecydować, czy polecić parasol. Do sprawdzenia pogody potrzebuję narzędzia pogodowego".
+
+Ciało (The Body): To jest zestaw narzędzi, które dajesz agentowi. Narzędziem może być dosłownie wszystko, co da się opakować w kod. Może to być funkcja w Pythonie, która łączy się z API pogodowym, kalkulator, wyszukiwarka Google, a nawet funkcja do wysyłania maili. Ciało wykonuje to, co mózg wymyśli.
+
+Podsumowując: Zwykły LLM ci opowie, jaka była pogoda wczoraj na podstawie danych treningowych. Agent AI sprawdzi ci pogodę na teraz i zarekomenduje konkretne działanie. Widzisz różnicę? Agenci działają!
+
+Rozdział 2: Workflow vs. Agent – Czym to się różni?
+Dobra, to teraz pogadajmy o dwóch głównych podejściach do automatyzacji zadań. To ważne, żebyś czuł tę różnicę.
+
+Workflow (czyli Przepływ Pracy):
+Wyobraź sobie, że składasz meble z Ikei. Masz instrukcję i lecisz krok po kroku: weź śrubkę A, wkręć ją w deskę B, połącz z elementem C. Nie ma tu miejsca na improwizację. Wszystko jest z góry ustalone przez dewelopera (tego, kto pisał instrukcję).
+W świecie kodu workflow to po prostu skrypt, który wykonuje serię z góry zdefiniowanych kroków. Na przykład:
+
+Pobierz dane z pliku CSV.
+Oblicz średnią z kolumny "sprzedaż".
+Zapisz wynik do nowego pliku. Proste, przewidywalne i super skuteczne do powtarzalnych zadań. Ale jeśli coś pójdzie nie tak (np. w pliku nie będzie kolumny "sprzedaż"), cały proces się wywali.
+Agent:
+Teraz wyobraź sobie, że zamiast instrukcji dajesz fachowcowi cel: "Panie, złóż pan to biurko". Fachowiec spojrzy na części, może zerknie do instrukcji, a może uzna, że jego sposób będzie lepszy. Jak zabraknie mu śrubki, to nie stanie w miejscu, tylko pójdzie do skrzynki z narzędziami i znajdzie podobną (użyje narzędzia).
+Agent działa właśnie tak. Dajesz mu cel (np. "Zaplanuj mi weekend w Krakowie"), a on sam decyduje, jakie kroki podjąć. Może pomyśleć:
+
+"Ok, najpierw sprawdzę pociągi do Krakowa (używam narzędzia do rezerwacji biletów)".
+"Potem znajdę hotel blisko centrum (używam narzędzia do bookowania hoteli)".
+"Na koniec poszukam opinii o restauracjach w okolicy (używam narzędzia do wyszukiwania w internecie)". Agent jest elastyczny. Potrafi reagować na nieoczekiwane sytuacje i sam wybiera najlepszą ścieżkę do celu. To jest ta fundamentalna różnica – workflow podąża ścieżką, a agent ją tworzy.
+Rozdział 3: Jeden Agent to za mało? Poznaj Systemy Wieloagentowe!
+Ok, jeden agent to fajna sprawa, ale co, jakbyśmy mieli całą ekipę specjalistów? Pomyśl o tym jak o budowie oprogramowania. Masz analityka, programistę, testera i gościa od wdrożeń. Każdy jest mistrzem w swojej dziedzinie. Razem mogą stworzyć coś znacznie bardziej złożonego, niż gdyby jedna osoba próbowała robić wszystko.
+
+System wieloagentowy to dokładnie to – zespół agentów AI, którzy współpracują, aby rozwiązać duży problem.
+
+Oto kilka sposobów, w jakie mogą współpracować:
+
+Delegowanie Zadań (Hierarchia): Masz agenta "Menedżera Projektu". Dajesz mu główne zadanie, np. "Stwórz prostą stronę wizytówkę dla mojej firmy". Menedżer analizuje zadanie i dzieli je na mniejsze części, które deleguje do swoich podwładnych:
+
+Agent "Copywriter" dostaje zadanie: "Napisz tekst na stronę główną".
+Agent "Grafik" dostaje zadanie: "Przygotuj logo i dobierz kolorystykę".
+Agent "Programista" dostaje zadanie: "Zakoduj stronę w HTML/CSS na podstawie tekstów i grafiki". Na koniec menedżer zbiera wszystko do kupy.
+Praca Równoległa: Wyobraź sobie, że chcesz zrobić dogłębny research na jakiś temat. Zamiast kazać jednemu agentowi szukać przez godzinę, zatrudniasz trzech. Jeden przeszukuje Google, drugi artykuły naukowe, a trzeci fora internetowe. Pracują w tym samym czasie, a ty dostajesz wyniki trzy razy szybciej.
+
+Praca Sekwencyjna (Taśmociąg): To klasyczna linia produkcyjna. Agent "Badacz" zbiera dane o potrzebach użytkowników. Kiedy skończy, przekazuje swoje wyniki agentowi "Planista", który na ich podstawie tworzy specyfikację produktu. Planista przekazuje ją agentowi "Programista", który pisze kod. Każdy agent pracuje na wyniku poprzedniego.
+
+Praca Konkurencyjna: Chcesz napisać chwytliwy tytuł dla artykułu. Zamiast prosić jednego agenta, prosisz o to trzech różnych. Każdy z nich podaje swoją propozycję. Na koniec ty (albo kolejny agent "Redaktor") wybierasz najlepszą. Agenci rywalizują o najlepszy wynik.
+
+Używanie wielu agentów pozwala rozwiązywać problemy o skali i złożoności, które byłyby nieosiągalne dla pojedynczego agenta. To jest przyszłość tej technologii.
+
+Rozdział 4: Nasza Skrzynka z Narzędziami – Wprowadzenie do Smol Agents
+No dobra, to tyle teorii. Czas na nasze główne narzędzie – Smol Agents. Pomyśl o tym jak o zestawie klocków LEGO dla budowniczych agentów. Zamiast rzeźbić wszystko od zera w czystym Pythonie, dostajesz gotowe elementy, które znacznie przyspieszają i ułatwiają pracę.
+
+Smol Agents to framework w Pythonie, który został stworzony z kilkoma fajnymi założeniami:
+
+Prostota: Bez zbędnej magii i skomplikowanych konfiguracji. Masz zacząć działać szybko.
+Elastyczna Integracja Modeli: Chcesz użyć mózgu od OpenAI? Proszę bardzo. A może wolisz coś od Google albo społeczności open-source? Nie ma problemu. Możesz łatwo podmieniać LLM-y, z których korzysta twój agent.
+Podejście "Code-First": To jest absolutnie kluczowe i super wygodne dla deweloperów! Wiele innych frameworków zmusza agenta do generowania odpowiedzi w formacie JSON, co bywa kłopotliwe. Smol Agents stawia na to, by agent pisał kod w Pythonie. Twój agent może dosłownie napisać funkcję, którą ty potem wykonasz. To daje niesamowitą elastyczność. To tak, jakbyś miał junior dewelopera, który pisze dla ciebie fragmenty kodu.
+Wbudowane Narzędzia: Na start dostajesz kilka podstawowych narzędzi, np. do przeszukiwania internetu. Baterie są już w zestawie.
+Łatwość Tworzenia Własnych Narzędzi: To jest najlepsza część. Chcesz nauczyć agenta nowej sztuczki? Po prostu piszesz zwykłą funkcję w Pythonie, dodajesz do niej krótki opis, co ona robi, i przekazujesz ją do agenta. To wszystko. Agent sam się zorientuje, kiedy i jak jej użyć.
+Smol Agents to po prostu praktyczne i przyjazne deweloperom narzędzie do szybkiego prototypowania i budowania agentów.
+
+Rozdział 5: Koniec Gadania, Czas na Kod! Budujemy Agenta Pogodowego
+Dobra, zakasujemy rękawy! Zbudujemy teraz prostego agenta, który na pytanie o pogodę, faktycznie ją sprawdzi.
+
+Krok 1: Przygotowanie Środowiska
+
+Zanim cokolwiek napiszemy, zróbmy porządek. Otwórz swój ulubiony edytor kodu (np. VS Code) i terminal.
+
+Stwórz folder na projekt: mkdir moj-agent-pogodowy i wejdź do niego cd moj-agent-pogodowy.
+Stwórz wirtualne środowisko: To super ważna praktyka, żeby nie zaśmiecać sobie systemu.
+Na Macu/Linuxie: python3 -m venv venv
+Na Windowsie: python -m venv venv
+Aktywuj środowisko:
+Na Macu/Linuxie: source venv/bin/activate
+Na Windowsie: .\venv\Scripts\activate Powinieneś zobaczyć (venv) na początku linii w terminalu. Super, jesteś w piaskownicy.
+Zainstaluj biblioteki: Potrzebujemy smol-agents i biblioteki od OpenAI (bo na ich modelu będziemy na razie bazować). pip install smol-agents openai
+Klucz API: Potrzebujesz klucza API od OpenAI. Zaloguj się na ich stronie, wygeneruj klucz i ustaw go jako zmienną środowiskową. W terminalu wpisz:
+Na Macu/Linuxie: export OPENAI_API_KEY='twoj_klucz_tutaj'
+Na Windowsie (w PowerShell): $env:OPENAI_API_KEY='twoj_klucz_tutaj'
+Krok 2: Pisanie Kodu
+
+Stwórz plik pogoda_agent.py i wklej poniższy kod. Zaraz go omówimy.
+
+Python
+
+# Importujemy potrzebne rzeczy
+from smol_agents import Agent
+import os
+
+# Krok 2.1: Definiujemy nasze niestandardowe narzędzie
+# To jest 'ciało' naszego agenta!
+def get_current_weather(city: str) -> str:
+    """
+    Użyj tej funkcji, aby uzyskać aktualną pogodę dla danego miasta.
+    """
+    print(f"--- Narzędzie: Sprawdzam pogodę dla {city} ---")
+    # W prawdziwym świecie tutaj byłoby zapytanie do API pogodowego
+    # My na razie udajemy, żeby było prościej
+    if "warszawa" in city.lower():
+        return "Pogoda w Warszawie: 22 stopnie, słonecznie."
+    elif "kraków" in city.lower():
+        return "Pogoda w Krakowie: 19 stopni, lekkie zachmurzenie."
+    else:
+        return f"Niestety, nie mam danych pogodowych dla {city}."
+
+# Krok 2.2: Tworzymy instancję Agenta
+# To jest nasz 'mózg' i połączenie go z 'ciałem'
+pogodynka_agent = Agent(
+    name="Pogodynka",
+    description="Agent specjalizujący się w sprawdzaniu aktualnej pogody.",
+    model="gpt-4-turbo",  # Możesz tu użyć też np. 'gpt-3.5-turbo'
+    tools=[get_current_weather], # Tutaj przekazujemy nasze narzędzie!
+    # Upewniamy się, że klucz API jest dostępny
+    api_key=os.getenv("OPENAI_API_KEY"),
+)
+
+# Krok 2.3: Uruchamiamy agenta z naszym zadaniem
+print("Agent gotowy! Zadaj mu pytanie (lub wpisz 'wyjscie' aby zakończyć).")
+
+while True:
+    pytanie_uzytkownika = input("Ty: ")
+    if pytanie_uzytkownika.lower() == 'wyjscie':
+        break
+    
+    wynik = pogodynka_agent.run(pytanie_uzytkownika)
+    print(f"Pogodynka: {wynik}")
+
+Omówienie kodu:
+
+Krok 2.1: Tworzymy zwykłą funkcję get_current_weather. Zwróć uwagę na docstring (ten tekst w trzech cudzysłowach). To jest super ważne! Agent przeczyta ten opis, żeby zrozumieć, do czego służy ta funkcja. Type hint (city: str) też mu w tym pomaga.
+Krok 2.2: Tworzymy obiekt Agent. Dajemy mu nazwę, opis, mówimy, jakiego modelu ma używać (model) i co najważniejsze – w liście tools przekazujemy mu naszą funkcję. W ten sposób daliśmy agentowi nowe narzędzie do jego "ciała".
+Krok 2.3: Robimy prostą pętlę, żeby móc z agentem "porozmawiać". Funkcja agent.run() to moment, w którym dzieje się cała magia.
+Krok 3: Uruchomienie!
+
+W terminalu (upewnij się, że masz aktywne środowisko venv) wpisz:
+
+python pogoda_agent.py
+
+Teraz zadaj mu pytanie, np. "Jaka jest pogoda w Warszawie?". Zobaczysz, że agent najpierw wypisze komunikat z naszej funkcji (to znak, że użył narzędzia), a potem sformułuje ładną odpowiedź. Spróbuj też zapytać o Kraków albo o miasto, którego nie ma w funkcji!
+
+Twoje zadanie: Rozbuduj to! Dodaj nowe miasta. A może stworzysz zupełnie nowe narzędzie, np. kalkulator(dzialanie: str)? Działaj!
+
+Rozdział 6: Mój Agent Działa. Co Dalej? Czyli o Monitorowaniu
+Super, twój agent działa na twoim kompie. Ale co się stanie, gdyby zaczął z niego korzystać cały świat? Skąd będziesz wiedział, czy działa dobrze? Czy nie jest za drogi w utrzymaniu? Czy nie popełnia głupich błędów?
+
+Tutaj wchodzi monitorowanie. To jak zainstalowanie kamer i czujników w fabryce. Musisz wiedzieć, co się dzieje w środku, żeby móc to ulepszać.
+
+Dlaczego to takie ważne?
+Bo agenci AI bywają nieprzewidywalni. Chcesz wiedzieć:
+
+Co agent sobie "pomyślał", zanim podjął decyzję?
+Których narzędzi użył i z jakimi parametrami?
+Ile go kosztował pojedynczy przebieg (zapytania do API LLM-ów kosztują)?
+W którym miejscu popełnił błąd?
+Do tego służą specjalistyczne narzędzia. Dwa najpopularniejsze standardy/narzędzia to:
+
+OpenTelemetry: Pomyśl o tym jak o uniwersalnym standardzie do zbierania danych o tym, co robi twoja aplikacja. To nie jest narzędzie samo w sobie, a raczej zestaw reguł i bibliotek, które pozwalają twojemu kodowi "nadawać" informacje o swoim stanie (logi, ślady wykonania, metryki).
+
+Langfuse: To jest właśnie odbiornik i panel do wizualizacji tych danych, specjalnie zaprojektowany dla aplikacji opartych na LLM. Langfuse zbiera dane wysyłane przez OpenTelemetry i pokazuje ci w ładnym interfejsie webowym całą ścieżkę myślenia twojego agenta. Krok po kroku widzisz, jakie dostał zapytanie, co odpowiedział LLM, jakie narzędzie zostało wywołane i jaki był ostateczny wynik. To absolutny game-changer przy debugowaniu i optymalizacji.
+
+Jak to działa w praktyce (koncepcyjnie):
+
+Dodajesz do swojego kodu pip install langfuse.
+Na początku skryptu inicjujesz Langfuse, podając mu swoje klucze API (które dostajesz po zarejestrowaniu się na ich stronie).
+Dobre frameworki do budowy agentów (jak LangChain, a także rozwijające się ekosystemy wokół Smol Agents) mają wbudowane integracje (callbacks lub tracers). Wystarczy, że dodasz odpowiedni callback podczas tworzenia agenta.
+Od tej pory każde wywołanie agent.run() będzie automatycznie rejestrowane i wysyłane do twojego panelu w Langfuse.
+Logujesz się na swoje konto Langfuse i widzisz piękną historię wszystkich interakcji, możesz je filtrować, analizować koszty i znajdować problemy.
+Pamiętaj: Budowa to jedno, ale utrzymanie i ulepszanie to drugie. Nie lekceważ monitorowania, bo bez niego będziesz błądzić po omacku, gdy tylko twój agent trafi do prawdziwych użytkowników.

@@ -1,0 +1,108 @@
+Rozdział 11: Uruchomienie Agenta w Chmurze – Jak Wdrożyć Swój Projekt na Serwer?
+Wprowadzenie
+Do tej pory nasz potężny agent mieszkał wyłącznie na naszym komputerze. Aby go uruchomić, musieliśmy otworzyć terminal i ręcznie odpalić skrypt. To świetne do developmentu i testów, ale co, jeśli chcemy, aby nasz agent pracował dla nas samodzielnie? Na przykład, codziennie o 8:00 sprawdzał ceny interesujących nas produktów i wysyłał nam raport?
+
+Aby to osiągnąć, musimy go "wdrożyć" (ang. deploy) – czyli umieścić i uruchomić na zdalnym serwerze w chmurze.
+
+Wyzwanie: Nasz agent nie jest typową stroną internetową. To długo działający skrypt, który wykonuje jedno zadanie od początku do końca. Nazywamy go "workerem" lub "zadaniem w tle" (ang. background worker). Dlatego nie możemy go umieścić na zwykłym hostingu dla stron WWW. Potrzebujemy platformy, która pozwala na uruchamianie takich właśnie procesów.
+
+W tym rozdziale omówimy kilka opcji, a następnie krok po kroku przeprowadzimy wdrożenie naszego agenta na platformie Render.com, która oferuje świetny darmowy plan i jest niezwykle przyjazna dla początkujących.
+
+Krok 11.1: Przygotowanie Projektu do Wdrożenia
+Zanim wyślemy nasz kod w świat, musimy go odpowiednio spakować. Nowoczesne platformy hostingowe polegają na systemie kontroli wersji Git i serwisach takich jak GitHub.
+
+Krok 11.1.1: Stworzenie Repozytorium na GitHubie
+Jeśli nie masz jeszcze konta, załóż je na github.com. Następnie:
+
+Stwórz nowe, publiczne repozytorium, np. o nazwie ai-scraper-agent.
+Otwórz terminal na swoim komputerze, wejdź do folderu moj-agent-scraper i wykonaj poniższe komendy, aby połączyć swój lokalny projekt z repozytorium na GitHubie. (Zastąp TWOJA_NAZWA_UŻYTKOWNIKA swoją nazwą z GitHuba).
+Bash
+
+git init
+git add .
+git commit -m "Pierwsza wersja agenta"
+git branch -M main
+git remote add origin https://github.com/TWOJA_NAZWA_UŻYTKOWNIKA/ai-scraper-agent.git
+git push -u origin main
+Krok 11.1.2: Plik requirements.txt – Lista Zakupów dla Serwera
+Serwer musi wiedzieć, jakie biblioteki Pythona zainstalować. Stworzymy dla niego listę.
+
+Upewnij się, że masz aktywne środowisko wirtualne (venv).
+W terminalu, w folderze projektu, wykonaj komendę:
+Bash
+
+pip freeze > requirements.txt
+Ta komenda stworzy plik requirements.txt z listą wszystkich bibliotek, których używaliśmy.
+Krok 11.1.3: Uporządkowanie Kodu i Dodanie Zmiennej Zadania
+Dobrą praktyką jest oddzielenie kodu od konkretnego zadania, które ma wykonać. Zmodyfikujmy lekko funkcję main, aby treść zadania pobierała ze zmiennej środowiskowej.
+
+W pliku scraper_agent.py, w funkcji main, zmień linię z zadanie = "..." na:
+
+Python
+
+# ZMIANA W FUNKCJI main w scraper_agent.py
+
+# Pobieramy treść zadania ze zmiennej środowiskowej.
+# Jeśli zmienna nie istnieje, używamy zadania domyślnego.
+zadanie = os.getenv("AGENT_TASK", "Zadanie domyślne: Wejdź na quotes.toscrape.com i znajdź jeden cytat.")
+Krok 11.1.4: Ostateczne Wysłanie Zmian
+Dodaj nowy plik i zmiany do GitHuba:
+
+Bash
+
+git add requirements.txt scraper_agent.py
+git commit -m "Dodano requirements.txt i elastyczne zadanie"
+git push origin main
+Nasz projekt jest teraz gotowy do wdrożenia!
+
+Krok 11.2: Krok po Kroku – Wdrożenie na Render.com
+Render to nowoczesna platforma chmurowa, która idealnie nadaje się do naszego celu.
+
+Krok 11.2.1: Założenie Konta
+Przejdź na render.com.
+Zarejestruj się, najlepiej używając swojego konta GitHub. To znacznie uprości proces.
+Krok 11.2.2: Stworzenie Nowej Usługi
+W panelu głównym (Dashboard) kliknij przycisk "New +" i wybierz opcję "Background Worker".
+Krok 11.2.3: Połączenie z Repozytorium GitHub
+Render poprosi o połączenie z Twoim kontem GitHub.
+Po autoryzacji zobaczysz listę swoich repozytoriów. Wybierz ai-scraper-agent i kliknij "Connect".
+Krok 11.2.4: Konfiguracja Usługi
+Zobaczysz formularz konfiguracji. Wypełnij go następująco:
+
+Name: agent-scraper (lub inna unikalna nazwa).
+Region: Wybierz Frankfurt (EU Central), aby serwer był bliżej Europy.
+Branch: main.
+Runtime: Python 3.
+Build Command: pip install -r requirements.txt (powinno być domyślnie).
+Start Command: python scraper_agent.py (to komenda, która uruchomi naszego agenta).
+Instance Type: Wybierz plan Free.
+Krok 11.2.5: Dodanie Zmiennych Środowiskowych
+To najważniejszy krok konfiguracji. Zamiast ustawiać klucze API w terminalu, dodamy je w bezpiecznym menedżerze na Renderze.
+
+Przewiń w dół do sekcji "Environment".
+Kliknij "Add Environment Variable" i dodaj po kolei wszystkie klucze i nasze nowe zadanie:
+Key: OPENAI_API_KEY, Value: sk-...
+Key: E2B_API_KEY, Value: e2b_...
+Key: LANGFUSE_PUBLIC_KEY, Value: pk-lf-...
+Key: LANGFUSE_SECRET_KEY, Value: sk-lf-...
+Key: AGENT_TASK, Value: Wejdź na stronę 'http://quotes.toscrape.com/', znajdź jeden cytat o życiu (life), zapisz go w pliku 'life_quote.txt' i pobierz go. Na koniec zakończ zadanie. (Możesz tu wpisać dowolne zadanie!).
+Krok 11.2.6: Uruchomienie Wdrożenia
+Przewiń na sam dół strony i kliknij przycisk "Create Background Worker".
+Render automatycznie pobierze Twój kod z GitHuba, zainstaluje zależności z requirements.txt i uruchomi skrypt za pomocą komendy startowej.
+Krok 11.3: Monitorowanie Wdrożenia i Co Dalej?
+Po kliknięciu "Create..." zostaniesz przeniesiony do panelu Twojej nowej usługi.
+
+Logi (Logs): Przejdź do zakładki "Logs". Zobaczysz tam na żywo dokładnie te same komunikaty, które widziałeś w swoim lokalnym terminalu! Będziesz mógł śledzić cały proces pracy agenta.
+Co się dzieje po zakończeniu? Nasz skrypt jest zaprojektowany tak, by wykonać jedno zadanie i się zakończyć. Gdy to zrobi, usługa na Renderze przejdzie w stan "Succeeded" lub "Failed". To normalne. Darmowy plan uśpi usługę po okresie bezczynności.
+Jak uruchamiać agenta cyklicznie?
+Typ "Background Worker" jest idealny do jednorazowych zadań. Jeśli chcesz, aby Twój agent uruchamiał się automatycznie (np. raz dziennie), Render oferuje do tego inne narzędzie: Cron Jobs.
+
+W panelu Rendera możesz stworzyć nowy serwis typu "Cron Job".
+Jako komendę możesz podać polecenie, które zdalnie uruchomi Twojego workera (np. za pomocą API Rendera).
+Ustawiasz harmonogram (np. 0 8 * * * - codziennie o 8:00) i gotowe! Twój agent stał się w pełni autonomicznym bytem, żyjącym w chmurze.
+Krok 11.4: Inne Darmowe Opcje (w pigułce)
+Replit (replit.com): Niezwykle przyjazna platforma, która jest jednocześnie edytorem kodu i hostingiem. Możesz zaimportować repozytorium z GitHuba, a następnie za pomocą jednego kliknięcia wdrożyć projekt. Ich płatny plan "Replit Core" oferuje potężne możliwości i jest elastycznie rozliczany.
+PythonAnywhere (pythonanywhere.com): Klasyk w świecie hostingu Pythona. W darmowym planie możesz wgrywać swoje skrypty i uruchamiać je jako "Scheduled Tasks" (Zadania Zaplanowane) raz dziennie o określonej porze.
+Self-hosting (dla ambitnych): Najtańsza opcja. Możesz postawić serwer na starym laptopie lub minikomputerze typu Raspberry Pi. Wymaga to jednak większej wiedzy technicznej (konfiguracja systemu Linux, cron do harmonogramu zadań, systemd do zarządzania procesem).
+Podsumowanie
+Gratulacje! Twój agent opuścił bezpieczne gniazdo lokalnego komputera i jest teraz pełnoprawną aplikacją działającą w chmurze. Nauczyłeś się, jak przygotować projekt do wdrożenia za pomocą git i requirements.txt oraz jak krok po kroku uruchomić go na nowoczesnej, darmowej platformie. To otwiera przed Tobą zupełnie nowy świat możliwości – od automatycznych raportów, przez monitoring cen, po inteligentne alerty. Twój agent jest gotów pracować dla Ciebie 24 godziny na dobę.

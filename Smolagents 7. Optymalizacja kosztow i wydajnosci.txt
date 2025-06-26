@@ -1,0 +1,274 @@
+Rozdział 10: Optymalizacja Kosztów i Wydajności – Jak nie zbankrutować?
+Wprowadzenie
+Nasz agent jest jak luksusowy samochód sportowy – niesamowicie potężny, inteligentny i zdolny do rzeczy, o których konkurencja może tylko pomarzyć. Ma jednak jedną wadę, typową dla supersamochodów: paliwożerność. Każde zapytanie do GPT-4 Turbo i każda nowa sesja w sandboksie E2B to realne koszty. Przy intensywnym użytkowaniu rachunki mogą szybko rosnąć.
+
+W tym finałowym rozdziale przeprowadzimy tuning naszego agenta. Nie odbierzemy mu mocy, ale nauczymy go z niej korzystać w sposób inteligentny i oszczędny. Wdrożymy trzy kluczowe optymalizacje:
+
+Inteligentny dobór modeli (Model Routing): Agent będzie używał "mózgu na dwóch biegach" – taniego i szybkiego do prostych zadań, a drogiego i potężnego tylko wtedy, gdy to absolutnie konieczne.
+Caching wyników: Nauczymy go, by nie wykonywał dwa razy tej samej, kosztownej pracy.
+Debugowanie wizualne: Damy sobie możliwość zajrzenia agentowi przez ramię, aby na żywo zobaczyć to, co on widzi w swojej przeglądarce.
+Po tym rozdziale nasz agent będzie nie tylko inteligentny, ale i wydajny – gotowy do realnych zastosowań.
+
+Krok 10.1: Inteligentny Dobór Modeli (Model Routing)
+Problem: GPT-4 Turbo jest genialny w złożonym planowaniu i rozumowaniu, ale używanie go do podejmowania prostych decyzji (np. "mam dane, teraz zapiszę je do pliku") to jak strzelanie z armaty do komara. Tańsze modele, jak GPT-3.5-Turbo, są wielokrotnie tańsze i w zupełności wystarczają do prostszych zadań.
+
+Rozwiązanie: Stworzymy dwa "mózgi" dla naszego agenta – "Szybki Mózg" (GPT-3.5) i "Mocny Mózg" (GPT-4). Następnie zaimplementujemy prosty router, który będzie decydował, którego mózgu użyć w danej iteracji pętli ReAct.
+
+Implementacja:
+Stworzymy dwa obiekty Planner i będziemy dynamicznie wybierać między nimi w naszej pętli.
+
+Krok 10.2: Caching – Nie Rób Dwa Razy Tej Samej Roboty
+Problem: Uruchomienie sandboksu, instalacja pakietów i zescrapowanie strony to najdłuższy i najbardziej zasobożerny element pracy agenta. Jeśli w ramach jednego zadania agent musi wrócić do tej samej strony, nie ma sensu, by robił to wszystko od nowa.
+
+Rozwiązanie: Wprowadzimy prostą pamięć podręczną (cache) w formie słownika Pythona. Jeśli agent poprosi o zescrapowanie adresu URL, który już niedawno odwiedził, dostanie dane z pamięci, oszczędzając czas i zasoby.
+
+Implementacja:
+Zmodyfikujemy naszą klasę SandboxedBrowser, dodając do niej prosty słownik do przechowywania wyników. Zmodyfikujemy też narzędzie get_content, aby najpierw sprawdzało pamięć podręczną.
+
+Krok 10.3: Debugowanie Wizualne – Zobacz To, Co Widzi Agent
+Problem: Czasami logi tekstowe to za mało, aby zrozumieć, dlaczego agentowi nie udało się kliknąć w przycisk. Może zasłania go jakieś okienko pop-up? Może strona ma nietypowy layout?
+
+Rozwiązanie: E2B pozwala na żywo podglądać pulpit wirtualnej maszyny, na której pracuje agent. Włączymy tę opcję, aby w razie potrzeby móc dosłownie patrzeć na ręce naszego bota.
+
+Implementacja:
+Dodamy do naszego skryptu flagę VISUAL_DEBUG, która, gdy będzie włączona, uruchomi przeglądarkę w trybie graficznym (headless=False). Następnie poinstruujemy użytkownika, jak połączyć się z sesją VNC przez panel E2B.
+
+Krok 10.4: Integracja Kodu – Kompletny, Zoptymalizowany Agent
+Czas połączyć wszystkie te koncepcje. Poniżej znajduje się ostateczna wersja pliku scraper_agent.py z tego kursu. Zawiera ona wszystkie omówione optymalizacje.
+
+Python
+
+# PEŁNY, ZOPTYMALIZOWANY KOD PLIKU scraper_agent.py
+
+import os
+import asyncio
+import json
+import random
+import traceback
+from e2b import Sandbox
+from playwright.async_api import async_playwright, Page
+from twocaptcha import TwoCaptcha
+from smol_agents import Agent, Planner
+from bs4 import BeautifulSoup
+from langfuse import Langfuse
+from langfuse.callback import CallbackHandler
+
+# === Konfiguracja ===
+# OPTYMALIZACJA: Flaga do włączania trybu wizualnego
+VISUAL_DEBUG = False # Zmień na True, aby włączyć podgląd na żywo
+
+USER_AGENTS = [ "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36" ]
+E2B_API_KEY = os.getenv("E2B_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
+
+class SandboxedBrowser:
+    def __init__(self, use_proxy: bool = False):
+        self.use_proxy = use_proxy
+        self.sandbox: Sandbox | None = None
+        self.page: Page | None = None
+        # OPTYMALIZACJA: Inicjalizacja pamięci podręcznej
+        self.cache = {}
+
+    async def start(self):
+        print(f"--- Inicjalizacja: Uruchamiam sandbox... ---")
+        self.sandbox = await Sandbox.create(template="base", api_key=E2B_API_KEY)
+        
+        # ... (instalacja zależności bez zmian) ...
+        await self.sandbox.process.start_and_wait("pip install playwright beautifulsoup4 && playwright install chrome")
+        
+        print("--- Inicjalizacja: Uruchamiam przeglądarkę... ---")
+        # OPTYMALIZACJA: Uruchomienie w trybie graficznym lub headless
+        browser_args = [] if VISUAL_DEBUG else ['--headless=new']
+        
+        self.playwright = await async_playwright().start()
+        self.browser = await self.playwright.chromium.launch(headless=not VISUAL_DEBUG, args=browser_args)
+        
+        context = await self.browser.new_context(user_agent=random.choice(USER_AGENTS))
+        self.page = await context.new_page()
+
+        if VISUAL_DEBUG:
+            print("\n" + "="*50)
+            print("👁️ TRYB WIZUALNY WŁĄCZONY 👁️")
+            print("Przejdź do swojego panelu na https://e2b.dev/sandboxes")
+            print("Znajdź aktywną sesję i kliknij 'Show screen', aby zobaczyć pracę agenta.")
+            input("Naciśnij Enter, aby kontynuować...")
+            print("="*50 + "\n")
+
+        print("--- Inicjalizacja: Gotowy do pracy! ---")
+
+    async def close(self):
+        # ... (kod zamykania bez zmian) ...
+        print("--- Zamykanie: Sprzątam po sobie... ---")
+        if hasattr(self, 'browser') and self.browser: await self.browser.close()
+        if hasattr(self, 'playwright') and self.playwright: await self.playwright.stop()
+        if self.sandbox: await self.sandbox.close()
+        print("--- Zamykanie: Sesja zakończona. ---")
+
+    # OPTYMALIZACJA: Nowe, zunifikowane narzędzie do scrapowania z obsługą cache
+    async def get_content_from_url(self, url: str) -> str:
+        """
+        Nawiguje do podanego URL i pobiera treść strony.
+        Używa pamięci podręcznej, aby unikać wielokrotnego pobierania tej samej strony.
+        """
+        print(f"--- Narzędzie: Pobieram treść z {url} ---")
+        if url in self.cache:
+            print("CACHE HIT: Zwracam dane z pamięci podręznej.")
+            return self.cache[url]
+        
+        print("CACHE MISS: Rozpoczynam świeże pobieranie.")
+        await self.navigate(url)
+        content = await self.get_content()
+        self.cache[url] = content # Zapisujemy wynik w cache
+        return content
+
+    # Pozostałe narzędzia, z których część może zostać uproszczona lub usunięta
+    # na rzecz `get_content_from_url` w bardziej zaawansowanej wersji.
+    # Na potrzeby kursu zostawiamy je, aby agent miał wybór.
+    # ... (wklej tutaj wszystkie pozostałe metody-narzędzia z Rozdziału 9) ...
+    async def navigate(self, url: str) -> str:
+        """Nawiguje do podanego adresu URL."""
+        print(f"--- Narzędzie: Nawiguję do {url} ---")
+        await self.page.goto(url, wait_until='domcontentloaded')
+        return f"Pomyślnie przeniesiono na stronę: {url}"
+
+    async def get_content(self) -> str:
+        """Pobiera i zwraca całą treść tekstową aktualnej strony."""
+        print("--- Narzędzie: Pobieram treść strony... ---")
+        content_html = await self.page.content()
+        await self.sandbox.filesystem.write("/tmp/page.html", content_html)
+        script = """
+from bs4 import BeautifulSoup
+with open('/tmp/page.html', 'r', encoding='utf-8') as f:
+    soup = BeautifulSoup(f, 'html.parser')
+    for item in soup(["script", "style"]): item.extract()
+    print(soup.get_text(separator=' ', strip=True))
+"""
+        proc = await self.sandbox.process.start_and_wait(f"python -c \"{script}\"")
+        return f"Oto treść strony: {proc.stdout}"
+
+    async def save_text_to_file(self, filename: str, content: str) -> str:
+        """Zapisuje podany tekst (content) do pliku o podanej nazwie (filename)."""
+        print(f"--- Narzędzie: Zapisuję dane do pliku '{filename}'... ---")
+        await self.sandbox.filesystem.write(filename, content)
+        return f"Pomyślnie zapisano dane w pliku '{filename}'."
+
+    async def download_file_from_sandbox(self, filename: str) -> str:
+        """Pobiera plik o podanej nazwie (filename) z sandboksu na dysk lokalny."""
+        print(f"--- Narzędzie: Pobieram plik '{filename}'... ---")
+        file_content_bytes = await self.sandbox.filesystem.read_bytes(filename)
+        with open(filename, "wb") as f: f.write(file_content_bytes)
+        return f"Pomyślnie pobrano plik '{filename}'."
+
+
+# Pętla ReAct zintegrowana z Model Routingiem
+async def run_react_loop(fast_planner: Planner, smart_planner: Planner, tools: list, initial_prompt: str, trace):
+    max_iterations = 15
+    prompt = initial_prompt
+    
+    with trace.span(name="react-loop-optimized") as span:
+        for i in range(max_iterations):
+            print(f"\n--- 🤔 ITERACJA {i + 1}/{max_iterations} ---")
+            
+            try:
+                # OPTYMALIZACJA: Logika routera modeli
+                if "BŁĄD" in prompt[-500:] or i < 2: # Użyj mocnego modelu na początku lub po błędzie
+                    print("🧠 Wybieram Mocny Mózg (gpt-4-turbo)...")
+                    planner_to_use = smart_planner
+                else:
+                    print("⚡️ Wybieram Szybki Mózg (gpt-3.5-turbo)...")
+                    planner_to_use = fast_planner
+                
+                handler = CallbackHandler(trace_id=trace.id)
+                planner_to_use.callbacks = [handler]
+                response_json = await planner_to_use.get_plan(prompt)
+                
+                thought = response_json.get("thought")
+                action_name = response_json.get("action")
+                action_params = response_json.get("params", {})
+                
+                print(f"💬 Myśl: {thought}")
+                print(f"🎬 Działanie: {action_name} z parametrami {action_params}")
+                
+                if action_name == "finish":
+                    print("\n--- ✅ ZADANIE ZAKOŃCZONE ---")
+                    # ... (logika końcowa bez zmian) ...
+                    return
+
+                tool_to_execute = next((t for t in tools if t.__name__ == action_name), None)
+                
+                if tool_to_execute:
+                    observation = await tool_to_execute(**action_params)
+                else:
+                    observation = f"BŁĄD: Nie znaleziono narzędzia o nazwie '{action_name}'."
+                    
+                print(f"👀 Obserwacja: {observation[:300]}...")
+                prompt += f"\nThought: {thought}\nAction: {json.dumps({'action': action_name, 'params': action_params})}\nObservation: {observation}"
+
+            except Exception as e:
+                # ... (obsługa błędów bez zmian) ...
+                print(f"BŁĄD KRYTYCZNY W PĘTLI: {e}")
+                # LANGFUSE: Jeśli wystąpi błąd, oznaczamy span jako błędny i zapisujemy szczegóły
+                error_details = traceback.format_exc()
+                span.update(level='ERROR', status_message=str(e), output={"error": error_details})
+                trace.update(level='ERROR')
+                
+                observation = f"Wystąpił błąd krytyczny w pętli. Spróbuj inaczej. Błąd: {e}"
+                prompt += f"\nObservation: {observation}"
+                
+        print("\n--- Osiągnięto limit iteracji ---")
+
+async def main():
+    langfuse = Langfuse(public_key=LANGFUSE_PUBLIC_KEY, secret_key=LANGFUSE_SECRET_KEY, host="https://cloud.langfuse.com")
+    trace = langfuse.trace(name="optimized-agent-run", tags=["optimization-v1"])
+    browser_session = SandboxedBrowser()
+    try:
+        await browser_session.start()
+        
+        agent_tools = [
+            browser_session.get_content_from_url,
+            # Pozostałe narzędzia nadal dostępne
+            browser_session.save_text_to_file,
+            browser_session.download_file_from_sandbox,
+        ]
+
+        # OPTYMALIZACJA: Tworzymy dwa plannery z różnymi modelami
+        fast_planner = Planner(model="gpt-3.5-turbo", tools=agent_tools, api_key=OPENAI_API_KEY)
+        smart_planner = Planner(model="gpt-4-turbo", tools=agent_tools, api_key=OPENAI_API_KEY)
+        
+        # Nowe zadanie, które testuje cache
+        zadanie = """
+        1. Pobierz i przeanalizuj treść ze strony 'http://quotes.toscrape.com/'.
+        2. Następnie pobierz treść ze strony 'http://quotes.toscrape.com/page/2/'.
+        3. Na koniec, ponownie pobierz treść ze strony 'http://quotes.toscrape.com/'.
+        4. Zapisz w pliku 'cache_report.txt' informację, czy trzeci krok był szybszy.
+        5. Pobierz plik 'cache_report.txt' i zakończ zadanie.
+        """
+        trace.update(input=zadanie)
+        print(f"\n--- Zlecenie dla Agenta: {zadanie} ---\n")
+        
+        await run_react_loop(fast_planner, smart_planner, agent_tools, zadanie, trace)
+
+    except Exception as e:
+        print(f"Wystąpił nieoczekiwany błąd główny: {e}")
+        trace.update(level='ERROR', status_message=str(e), output={"error": traceback.format_exc()})
+    finally:
+        await browser_session.close()
+        langfuse.flush()
+        print("--- Zakończono działanie. Dane wysłano do Langfuse. ---")
+
+if __name__ == "__main__":
+    if not all([OPENAI_API_KEY, E2B_API_KEY, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY]):
+        print("BŁĄD: Brak jednego lub więcej kluczy API.")
+    else:
+        asyncio.run(main())
+Podsumowanie i Uruchomienie
+Jak to działa?
+
+Model Routing: W run_react_loop zaimplementowaliśmy prosty warunek. Na dwóch pierwszych, najważniejszych krokach (planowanie) oraz po każdym błędzie, agent używa drogiego, ale inteligentnego smart_planner (GPT-4). Do rutynowych kroków pośrednich używa taniego i błyskawicznego fast_planner (GPT-3.5). Zobaczysz w logach, który "mózg" jest aktualnie używany.
+Caching: Stworzyliśmy nowe, główne narzędzie get_content_from_url. Za pierwszym razem, gdy agent odwiedza stronę, normalnie ją scrapuje i zapisuje wynik w słowniku self.cache. Gdy w ramach zadania ma wrócić na tę samą stronę, narzędzie natychmiast zwróci zapisany wynik, co zobaczysz w logach jako "CACHE HIT".
+Debugowanie Wizualne: Zmień flagę VISUAL_DEBUG na True na samej górze pliku. Przy następnym uruchomieniu skrypt zatrzyma się i poprosi Cię o naciśnięcie Enter. W tym czasie możesz wejść na swoje konto E2B, znaleźć aktywną sesję i kliknąć "Show screen". Zobaczysz na żywo pulpit z otwartą przeglądarką i będziesz mógł śledzić każdy ruch kursora i każdą akcję wykonywaną przez Twojego agenta.
+Uruchom skrypt i obserwuj, jak agent inteligentnie zarządza zasobami, korzystając z pamięci podręcznej i przełączając się między modelami.
+
+Gratulacje! Ukończyłeś pełny kurs budowy zaawansowanego agenta AI. Twój agent jest teraz nie tylko potężny, myślący i monitorowany, ale także zoptymalizowany pod kątem kosztów i wydajności. Posiadasz teraz kompletny zestaw umiejętności, aby budować własne, złożone i gotowe do wdrożenia aplikacje oparte na sztucznej inteligencji. Świat automatyzacji stoi przed Tobą otworem!

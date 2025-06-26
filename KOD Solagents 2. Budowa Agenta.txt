@@ -1,0 +1,165 @@
+Rozdział 3: Budowa Agenta – Pisanie Kodu
+W folderze moj-agent-scraper stwórz plik o nazwie scraper_agent.py. Otwórz go w swoim ulubionym edytorze kodu (np. VS Code, PyCharm, a nawet Notatnik) i wklej poniższy kod. Zaraz omówimy go kawałek po kawałku.
+
+Python
+
+# Krok 3.1: Importy i Konfiguracja
+import os
+import asyncio
+from e2b import Sandbox
+from playwright.async_api import async_playwright, Page
+from twocaptcha import TwoCaptcha
+from smol_agents import Agent
+from bs4 import BeautifulSoup
+
+# Wczytujemy klucze API ze zmiennych środowiskowych
+# Jeśli ich nie ustawiłeś, tutaj program zwróci błąd - i dobrze!
+E2B_API_KEY = os.getenv("E2B_API_KEY")
+TWOCAPTCHA_API_KEY = os.getenv("TWOCAPTCHA_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# Opcjonalna konfiguracja proxy - uzupełnij, jeśli chcesz używać
+PROXY_CONFIG = {
+    "server": "http://twoj_host_proxy:port", # np. http://123.45.67.89:8080
+    "username": "twoj_uzytkownik",
+    "password": "twoje_haslo_proxy"
+}
+
+# Krok 3.2: Sercem Operacji – Klasa SandboxedBrowser
+class SandboxedBrowser:
+    """
+    Klasa zarządzająca jedną, stałą sesją przeglądarki w sandboksie E2B.
+    Utrzymuje stan i pozwala na wykonywanie wielu operacji po kolei.
+    """
+    def __init__(self, use_proxy: bool = False):
+        self.sandbox: Sandbox | None = None
+        self.page: Page | None = None
+        self.use_proxy = use_proxy
+        self.captcha_solver = TwoCaptcha(TWOCAPTCHA_API_KEY)
+
+    async def start(self):
+        """Uruchamia sandbox, instaluje zależności i odpala przeglądarkę."""
+        print("--- Inicjalizacja: Uruchamiam sandbox E2B... ---")
+        self.sandbox = await Sandbox.create(template="base", api_key=E2B_API_KEY)
+        
+        print("--- Inicjalizacja: Instaluję zależności w sandboksie... ---")
+        await self.sandbox.process.start_and_wait(
+            "apt-get update && apt-get install -y libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libatspi2.0-0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libxkbcommon0 libpango-1.0-0 libcairo2 libasound2"
+        )
+        await self.sandbox.process.start_and_wait("pip install playwright beautifulsoup4 && playwright install chrome")
+        
+        print("--- Inicjalizacja: Uruchamiam przeglądarkę Chrome w sandboksie... ---")
+        browser_args = ['--headless=new']
+        if self.use_proxy:
+            browser_args.append(f"--proxy-server={PROXY_CONFIG['server']}")
+        
+        self.playwright = await async_playwright().start()
+        self.browser = await self.playwright.chromium.launch(headless=True, args=browser_args)
+        
+        context = await self.browser.new_context()
+        if self.use_proxy:
+            await context.set_http_credentials({
+                'username': PROXY_CONFIG['username'],
+                'password': PROXY_CONFIG['password']
+            })
+
+        self.page = await context.new_page()
+        print("--- Inicjalizacja: Przeglądarka jest gotowa do pracy! ---")
+
+    async def close(self):
+        """Zamyka przeglądarkę i sandbox."""
+        print("--- Zamykanie: Sprzątam po sobie... ---")
+        if hasattr(self, 'browser') and self.browser: await self.browser.close()
+        if hasattr(self, 'playwright') and self.playwright: await self.playwright.stop()
+        if self.sandbox: await self.sandbox.close()
+        print("--- Zamykanie: Sesja zakończona. ---")
+
+    # === NARZĘDZIA DLA AGENTA ===
+
+    async def navigate(self, url: str) -> str:
+        """Nawiguje do podanego adresu URL."""
+        print(f"--- Narzędzie: Nawiguję do {url} ---")
+        await self.page.goto(url, wait_until='domcontentloaded')
+        return f"Pomyślnie przeniesiono na stronę: {url}"
+
+    async def click_element(self, selector: str) -> str:
+        """Klika na element na stronie używając selektora CSS."""
+        print(f"--- Narzędzie: Klikam w element '{selector}' ---")
+        await self.page.click(selector, timeout=5000)
+        return f"Pomyślnie kliknięto w element '{selector}'."
+
+    async def fill_input(self, selector: str, text: str) -> str:
+        """Wypełnia pole tekstowe na stronie."""
+        print(f"--- Narzędzie: Wypełniam pole '{selector}' tekstem '{text}' ---")
+        await self.page.fill(selector, text)
+        return f"Pomyślnie wypełniono pole '{selector}'."
+
+    async def get_content(self) -> str:
+        """Pobiera i zwraca całą treść tekstową aktualnej strony."""
+        print("--- Narzędzie: Pobieram treść strony... ---")
+        content_html = await self.page.content()
+        await self.sandbox.filesystem.write("/tmp/page.html", content_html)
+        script = """
+from bs4 import BeautifulSoup
+with open('/tmp/page.html', 'r', encoding='utf-8') as f:
+    soup = BeautifulSoup(f, 'html.parser')
+    for item in soup(["script", "style"]): item.extract()
+    print(soup.get_text(separator=' ', strip=True))
+"""
+        proc = await self.sandbox.process.start_and_wait(f"python -c \"{script}\"")
+        return f"Oto treść strony: {proc.stdout}"
+
+
+    async def solve_and_fill_captcha(self, captcha_selector: str, input_selector: str) -> str:
+        """Znajduje obrazek CAPTCHA, rozwiązuje go i wpisuje wynik do pola."""
+        print(f"--- Narzędzie: Rozpoczynam rozwiązywanie CAPTCHA... ---")
+        captcha_element = self.page.locator(captcha_selector)
+        screenshot_bytes = await captcha_element.screenshot()
+        captcha_path_in_sandbox = "/tmp/captcha.png"
+        await self.sandbox.filesystem.write(captcha_path_in_sandbox, screenshot_bytes)
+        print("--- Krok 1: Zrobiono zrzut ekranu CAPTCHA. Wysyłam do API... ---")
+        result = self.captcha_solver.normal(screenshot_bytes)
+        captcha_text = result.get('code')
+        print(f"--- Krok 2: Otrzymano rozwiązanie: '{captcha_text}' ---")
+        await self.fill_input(input_selector, captcha_text)
+        return f"Pomyślnie rozwiązano CAPTCHA i wpisano tekst."
+
+# Krok 3.3: Mózg Operacji – Definicja Agenta
+def create_agent(browser_session: SandboxedBrowser) -> Agent:
+    return Agent(
+        name="AgentScraperPro",
+        description="Agent-ekspert od web scrapingu, który operuje na stałej sesji przeglądarki. Potrafi nawigować, klikać, wypełniać pola i rozwiązywać CAPTCHA.",
+        model="gpt-4-turbo",
+        tools=[
+            browser_session.navigate,
+            browser_session.click_element,
+            browser_session.fill_input,
+            browser_session.get_content,
+            browser_session.solve_and_fill_captcha,
+        ],
+        api_key=OPENAI_API_KEY
+    )
+
+# Krok 3.4: Główna Funkcja 'main' – Dyrygent Orkiestry
+async def main():
+    browser_session = SandboxedBrowser(use_proxy=False)
+    try:
+        await browser_session.start()
+        agent = create_agent(browser_session)
+        
+        zadanie = "Wejdź na stronę 'https://quotes.toscrape.com/'. Następnie kliknij w link 'Login' w prawym górnym rogu. Na koniec pobierz całą widoczną treść strony logowania."
+        print(f"\n--- Zlecenie dla Agenta: {zadanie} ---\n")
+
+        wynik = await agent.arun(zadanie)
+        print(f"\n--- Ostateczny Raport Agenta ---\n{wynik}")
+
+    except Exception as e:
+        print(f"Wystąpił nieoczekiwany błąd główny: {e}")
+    finally:
+        await browser_session.close()
+
+if __name__ == "__main__":
+    if not all([OPENAI_API_KEY, E2B_API_KEY, TWOCAPTCHA_API_KEY]):
+        print("BŁĄD: Brak jednego lub więcej kluczy API. Ustaw je jako zmienne środowiskowe!")
+    else:
+        asyncio.run(main())

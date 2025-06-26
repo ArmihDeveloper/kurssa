@@ -1,0 +1,364 @@
+Rozdział 9: Agent pod Mikroskopem – Monitorowanie i Obsługa Błędów z Langfuse
+Wprowadzenie
+Wyobraź sobie, że zbudowałeś najnowocześniejszy samolot. Jest szybki, zwinny i potężny. Ale nie ma w nim żadnych wskaźników – ani wysokościomierza, ani wskaźnika paliwa, ani radaru. Czy odważyłbyś się nim polecieć? Prawdopodobnie nie.
+
+Do tej pory nasz agent był właśnie takim samolotem. Działał imponująco, ale w dużej mierze w "ciemno". Kiedy coś szło nie tak, dostawaliśmy tylko ogólny komunikat o błędzie. Nie wiedzieliśmy, co dokładnie "pomyślał", dlaczego podjął złą decyzję, ile kosztowała nas dana operacja, ani gdzie leżał prawdziwy powód awarii.
+
+W tym rozdziale zamontujemy w naszym agencie pełną deskę rozdzielczą. Zintegrujemy go z Langfuse – profesjonalną platformą do monitorowania aplikacji opartych na LLM. Dzięki temu zyskamy wgląd w każdą jego myśl, działanie i obserwację. Ulepszymy także naszą logikę, aby nie tylko lepiej radziła sobie z błędami, ale także precyzyjnie je dla nas oznaczał.
+
+Krok 9.1: Czym jest Langfuse i dlaczego go potrzebujemy?
+Langfuse to platforma open-source stworzona specjalnie do monitorowania, debugowania i analizy aplikacji, których sercem jest model językowy. To nasze centrum dowodzenia, które zbiera i w piękny, czytelny sposób wizualizuje wszystko, co dzieje się "pod maską" agenta.
+
+Kluczowe korzyści:
+
+Obserwowalność (Observability): Zobaczysz dokładną sekwencję: Myśl -> Działanie -> Obserwacja. Koniec ze zgadywaniem, co agent próbował zrobić.
+Precyzyjne Debugowanie (Debugging): Gdy zadanie się nie powiedzie, Langfuse pokaże Ci dokładny krok, w którym wystąpił błąd, jaki był jego powód i jaki był stan agenta tuż przed awarią.
+Analiza Kosztów (Cost Analysis): Każde zapytanie do GPT-4 kosztuje. Langfuse automatycznie śledzi zużycie tokenów i pokazuje koszt każdej operacji i całego zadania co do centa.
+Śledzenie Wydajności (Performance Tracking): Zmierzysz, ile czasu zajmuje agentowi podjęcie decyzji i wykonanie zadania, co pozwoli Ci identyfikować wąskie gardła.
+Krok 9.2: Praktyczna Integracja z Langfuse
+Czas podłączyć naszego agenta do nowej deski rozdzielczej.
+
+Krok 9.2.1: Instalacja
+W terminalu, z aktywnym środowiskiem (venv), zainstaluj bibliotekę Langfuse:
+
+Bash
+
+pip install langfuse
+Krok 9.2.2: Zdobycie Kluczy Langfuse
+Przejdź na stronę cloud.langfuse.com i załóż darmowe konto.
+Po zalogowaniu stwórz nowy projekt, np. o nazwie agent-scraper.
+Przejdź do sekcji "Project Settings" -> "API Keys".
+Znajdziesz tam dwa klucze, których potrzebujesz: Public Key (zaczyna się od pk-lf-...) i Secret Key (zaczyna się od sk-lf-...).
+Krok 9.2.3: Konfiguracja Kluczy w Kodzie
+Podobnie jak w przypadku innych kluczy, ustawimy je jako zmienne środowiskowe w terminalu przed uruchomieniem skryptu:
+
+Na Windows (w PowerShell):
+PowerShell
+
+$env:LANGFUSE_PUBLIC_KEY = "pk-lf-..."
+$env:LANGFUSE_SECRET_KEY = "sk-lf-..."
+Na macOS / Linux:
+Bash
+
+export LANGFUSE_PUBLIC_KEY="pk-lf-..."
+export LANGFUSE_SECRET_KEY="sk-lf-..."
+Następnie dodamy ich wczytywanie na początku pliku scraper_agent.py.
+
+Krok 9.3: Ulepszona Obsługa Błędów i Pełny Kod z Monitorowaniem
+Teraz dokonamy kluczowych zmian w naszym kodzie. Zintegrujemy klienta Langfuse, stworzymy system śledzenia (trace) dla każdego zadania i ulepszymy pętlę ReAct, aby raportowała błędy.
+
+Poniżej znajduje się kompletna, ostateczna wersja pliku scraper_agent.py. Zwróć szczególną uwagę na sekcje oznaczone komentarzem # LANGFUSE.
+
+Python
+
+# PEŁNY, ZAKTUALIZOWANY KOD PLIKU scraper_agent.py
+
+import os
+import asyncio
+import json
+import random
+import traceback
+from e2b import Sandbox
+from playwright.async_api import async_playwright, Page
+from twocaptcha import TwoCaptcha
+from smol_agents import Agent, Planner
+from bs4 import BeautifulSoup
+
+# LANGFUSE: Importy
+from langfuse import Langfuse
+from langfuse.callback import CallbackHandler
+
+# Konfiguracja
+USER_AGENTS = [ "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36" ]
+E2B_API_KEY = os.getenv("E2B_API_KEY")
+TWOCAPTCHA_API_KEY = os.getenv("TWOCAPTCHA_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+# LANGFUSE: Wczytywanie kluczy
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
+
+# Klasa SandboxedBrowser (bez zmian w stosunku do Rozdziału 8)
+class SandboxedBrowser:
+    # ... wklej tutaj całą, nienaruszoną klasę SandboxedBrowser z poprzedniego rozdziału ...
+    # ... (dla zwięzłości pomijamy jej kod tutaj, ale musi on być w Twoim pliku) ...
+    def __init__(self, use_proxy: bool = False):
+        self.use_proxy = use_proxy
+        self.sandbox: Sandbox | None = None
+        self.page: Page | None = None
+        self.captcha_solver = TwoCaptcha(TWOCAPTCHA_API_KEY)
+
+
+    async def start(self):
+        print(f"--- Inicjalizacja: Uruchamiam sandbox... ---")
+        self.sandbox = await Sandbox.create(template="base", api_key=E2B_API_KEY)
+        
+        print("--- Inicjalizacja: Instaluję zależności... ---")
+        await self.sandbox.process.start_and_wait("apt-get update && apt-get install -y libnss3 libnspr4 libdbus-1-3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libatspi2.0-0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libxkbcommon0 libpango-1.0-0 libcairo2 libasound2")
+        await self.sandbox.process.start_and_wait("pip install playwright beautifulsoup4 && playwright install chrome")
+        
+        print("--- Inicjalizacja: Uruchamiam przeglądarkę z losowym User-Agentem... ---")
+        browser_args = ['--headless=new']
+        # if self.use_proxy and PROXY_CONFIG['server']:
+        #     browser_args.append(f"--proxy-server={PROXY_CONFIG['server']}")
+        
+        self.playwright = await async_playwright().start()
+        self.browser = await self.playwright.chromium.launch(headless=True, args=browser_args)
+        
+        context = await self.browser.new_context(user_agent=random.choice(USER_AGENTS))
+        # if self.use_proxy and PROXY_CONFIG['username']:
+        #     await context.set_http_credentials({ 'username': PROXY_CONFIG['username'], 'password': PROXY_CONFIG['password'] })
+        self.page = await context.new_page()
+        print("--- Inicjalizacja: Gotowy do pracy! ---")
+
+    async def close(self):
+        print("--- Zamykanie: Sprzątam po sobie... ---")
+        if hasattr(self, 'browser') and self.browser: await self.browser.close()
+        if hasattr(self, 'playwright') and self.playwright: await self.playwright.stop()
+        if self.sandbox: await self.sandbox.close()
+        print("--- Zamykanie: Sesja zakończona. ---")
+
+    # --- Narzędzia Agenta (wszystkie poprzednie + nowe) ---
+    async def navigate(self, url: str) -> str:
+        """Nawiguje do podanego adresu URL."""
+        print(f"--- Narzędzie: Nawiguję do {url} ---")
+        await self.page.goto(url, wait_until='domcontentloaded')
+        return f"Pomyślnie przeniesiono na stronę: {url}"
+
+    async def wait_for_element(self, selector: str, timeout: int = 10) -> str:
+        """Czeka, aż element pojawi się na stronie."""
+        print(f"--- Narzędzie: Czekam na element '{selector}' (max {timeout}s)... ---")
+        try:
+            await self.page.locator(selector).wait_for(state='visible', timeout=timeout * 1000)
+            return f"Element '{selector}' jest widoczny."
+        except Exception as e:
+            return f"BŁĄD: Element '{selector}' nie pojawił się w ciągu {timeout}s."
+
+    async def click_element(self, selector: str) -> str:
+        """Klika na element na stronie używając selektora CSS."""
+        print(f"--- Narzędzie: Klikam w element '{selector}' ---")
+        try:
+            await self.page.locator(selector).click(timeout=5000)
+            return f"Pomyślnie kliknięto w element '{selector}'."
+        except Exception as e:
+            return f"BŁĄD: Nie udało się kliknąć w element '{selector}'. Powód: {str(e)}"
+
+    async def click_element_in_iframe(self, iframe_selector: str, element_selector: str) -> str:
+        """Klika w element, który znajduje się wewnątrz ramki iframe."""
+        print(f"--- Narzędzie: Szukam ramki '{iframe_selector}', by kliknąć w '{element_selector}'... ---")
+        try:
+            await self.page.frame_locator(iframe_selector).locator(element_selector).click(timeout=5000)
+            return f"Pomyślnie kliknięto w element '{element_selector}' w ramce."
+        except Exception as e:
+            return f"BŁĄD: Nie udało się kliknąć w element w ramce. Powód: {str(e)}"
+    
+    async def fill_input(self, selector: str, text: str) -> str:
+        """Wypełnia pole tekstowe na stronie."""
+        print(f"--- Narzędzie: Wypełniam pole '{selector}' tekstem '{text}' ---")
+        await self.page.fill(selector, text)
+        return f"Pomyślnie wypełniono pole '{selector}'."
+
+    async def fill_input_in_iframe(self, iframe_selector: str, element_selector: str, text: str) -> str:
+        """Wypełnia pole tekstowe, które znajduje się wewnątrz ramki iframe."""
+        print(f"--- Narzędzie: Szukam ramki '{iframe_selector}', by wypełnić pole '{element_selector}'... ---")
+        try:
+            await self.page.frame_locator(iframe_selector).locator(element_selector).fill(text)
+            return f"Pomyślnie wypełniono pole '{element_selector}' w ramce."
+        except Exception as e:
+            return f"BŁĄD: Nie udało się wypełnić pola w ramce. Powód: {str(e)}"
+
+    async def execute_javascript(self, script: str) -> str:
+        """Wykonuje dowolny kod JavaScript na stronie i zwraca wynik."""
+        print(f"--- Narzędzie: Wykonuję skrypt JS: '{script[:50]}...' ---")
+        try:
+            result = await self.page.evaluate(script)
+            return f"Pomyślnie wykonano skrypt JS. Zwrócony wynik: {json.dumps(result)}"
+        except Exception as e:
+            return f"BŁĄD: Wykonanie skryptu JS nie powiodło się. Powód: {str(e)}"
+    
+    # ... i wszystkie pozostałe narzędzia: get_content, save_text_to_file, download_file_from_sandbox, get_page_html, list_interactive_elements ...
+    async def get_content(self) -> str:
+        """Pobiera i zwraca całą treść tekstową aktualnej strony."""
+        print("--- Narzędzie: Pobieram treść strony... ---")
+        content_html = await self.page.content()
+        await self.sandbox.filesystem.write("/tmp/page.html", content_html)
+        script = """
+from bs4 import BeautifulSoup
+with open('/tmp/page.html', 'r', encoding='utf-8') as f:
+    soup = BeautifulSoup(f, 'html.parser')
+    for item in soup(["script", "style"]): item.extract()
+    print(soup.get_text(separator=' ', strip=True))
+"""
+        proc = await self.sandbox.process.start_and_wait(f"python -c \"{script}\"")
+        return f"Oto treść strony: {proc.stdout}"
+
+    async def save_text_to_file(self, filename: str, content: str) -> str:
+        """Zapisuje podany tekst (content) do pliku o podanej nazwie (filename)."""
+        print(f"--- Narzędzie: Zapisuję dane do pliku '{filename}'... ---")
+        await self.sandbox.filesystem.write(filename, content)
+        return f"Pomyślnie zapisano dane w pliku '{filename}'."
+
+    async def download_file_from_sandbox(self, filename: str) -> str:
+        """Pobiera plik o podanej nazwie (filename) z sandboksu na dysk lokalny."""
+        print(f"--- Narzędzie: Pobieram plik '{filename}'... ---")
+        file_content_bytes = await self.sandbox.filesystem.read_bytes(filename)
+        with open(filename, "wb") as f: f.write(file_content_bytes)
+        return f"Pomyślnie pobrano plik '{filename}'."
+
+    async def get_page_html(self) -> str:
+        """Zwraca pełny kod HTML aktualnie otwartej strony."""
+        print("--- Narzędzie: Pobieram pełny kod HTML strony... ---")
+        return await self.page.content()
+
+    async def list_interactive_elements(self) -> str:
+        """Zwraca listę wszystkich interaktywnych elementów (linków i przycisków)."""
+        print("--- Narzędzie: Listuję wszystkie interaktywne elementy... ---")
+        elements = await self.page.eval_on_selector_all("a, button", """
+            (elements) => elements.filter(el => el.innerText.trim()).map(el => ({
+                tag: el.tagName.toLowerCase(),
+                text: el.innerText.trim(),
+                selector: el.getAttribute('href') ? `a[href="${el.getAttribute('href')}"]` : `#${el.getAttribute('id')}`
+            }))
+        """)
+        unique_elements = [dict(t) for t in {tuple(d.items()) for d in elements}]
+        return f"Oto znalezione elementy interaktywne: {json.dumps(unique_elements, indent=2)}"
+
+
+# Pętla ReAct zintegrowana z Langfuse
+async def run_react_loop(agent: Agent, initial_prompt: str, trace):
+    max_iterations = 15
+    prompt = initial_prompt
+    
+    # LANGFUSE: Tworzymy "span", czyli konkretną operację wewnątrz naszego śladu (trace)
+    # Będziemy w nim zapisywać postępy i ewentualne błędy.
+    with trace.span(name="react-loop") as span:
+        for i in range(max_iterations):
+            span.log(name="iteration", input={"iteration": i+1, "prompt_length": len(prompt)})
+            print(f"\n--- 🤔 ITERACJA {i + 1}/{max_iterations} ---")
+            
+            try:
+                # LANGFUSE: Inicjalizujemy CallbackHandlera dla tego konkretnego kroku
+                # To sprawi, że wywołanie LLM zostanie automatycznie zalogowane w Langfuse
+                # i powiązane z naszym śladem (trace).
+                handler = CallbackHandler(trace_id=trace.id)
+                agent.planner.callbacks = [handler]
+
+                response_json = await agent.planner.get_plan(prompt)
+                
+                thought = response_json.get("thought")
+                action_name = response_json.get("action")
+                action_params = response_json.get("params", {})
+                
+                print(f"💬 Myśl: {thought}")
+                print(f"🎬 Działanie: {action_name} z parametrami {action_params}")
+                
+                # Logujemy myśl i akcję do Langfuse
+                span.log(name="step", input={"thought": thought, "action": action_name, "params": action_params})
+                
+                if action_name == "finish":
+                    print("\n--- ✅ ZADANIE ZAKOŃCZONE ---")
+                    final_answer = action_params.get('answer', 'Brak odpowiedzi.')
+                    print(f"Ostateczna odpowiedź: {final_answer}")
+                    span.end(output=final_answer) # Kończymy span z wynikiem
+                    return
+
+                tool_to_execute = next((t for t in agent.tools if t.__name__ == action_name), None)
+                
+                if tool_to_execute:
+                    observation = await tool_to_execute(**action_params)
+                else:
+                    observation = f"BŁĄD: Nie znaleziono narzędzia o nazwie '{action_name}'."
+                    
+                print(f"👀 Obserwacja: {observation[:300]}...")
+                span.log(name="observation", output=observation)
+                
+                prompt += f"\nThought: {thought}\nAction: {json.dumps({'action': action_name, 'params': action_params})}\nObservation: {observation}"
+
+            except Exception as e:
+                print(f"BŁĄD KRYTYCZNY W PĘTLI: {e}")
+                # LANGFUSE: Jeśli wystąpi błąd, oznaczamy span jako błędny i zapisujemy szczegóły
+                error_details = traceback.format_exc()
+                span.update(level='ERROR', status_message=str(e), output={"error": error_details})
+                trace.update(level='ERROR')
+                
+                observation = f"Wystąpił błąd krytyczny w pętli. Spróbuj inaczej. Błąd: {e}"
+                prompt += f"\nObservation: {observation}"
+                
+        print("\n--- Osiągnięto limit iteracji ---")
+        span.end(output={"status": "Max iterations reached"})
+
+
+async def main():
+    # LANGFUSE: Inicjalizacja klienta
+    langfuse = Langfuse(
+        public_key=LANGFUSE_PUBLIC_KEY,
+        secret_key=LANGFUSE_SECRET_KEY,
+        host="https://cloud.langfuse.com"
+    )
+    
+    # LANGFUSE: Tworzymy główny ślad (trace) dla całego zadania
+    trace = langfuse.trace(
+        name="agent-scraper-run",
+        tags=["development", "scraper-v1"]
+    )
+
+    browser_session = SandboxedBrowser()
+    try:
+        await browser_session.start()
+        
+        agent = Agent(
+            name="AgentNadzorowany",
+            description="Super-zaawansowany agent do web scrapingu, w pełni monitorowany przez Langfuse.",
+            model="gpt-4-turbo",
+            tools=[
+                # ... tutaj pełna lista narzędzi z browser_session ...
+                 browser_session.navigate, browser_session.wait_for_element,
+                browser_session.click_element, browser_session.click_element_in_iframe,
+                browser_session.fill_input, browser_session.fill_input_in_iframe,
+                browser_session.execute_javascript, browser_session.get_content, 
+                browser_session.save_text_to_file, browser_session.download_file_from_sandbox,
+                browser_session.get_page_html, browser_session.list_interactive_elements
+            ],
+            api_key=OPENAI_API_KEY
+        )
+        
+        zadanie = "Wejdź na stronę 'http://quotes.toscrape.com/'. Znajdź cytat zawierający słowo 'world', zapisz go w pliku 'world_quote.txt' i pobierz ten plik. Na koniec zakończ zadanie."
+        trace.update(input=zadanie) # LANGFUSE: Zapisujemy początkowe zadanie
+        
+        print(f"\n--- Zlecenie dla Agenta: {zadanie} ---\n")
+        
+        await run_react_loop(agent, zadanie, trace)
+
+    except Exception as e:
+        print(f"Wystąpił nieoczekiwany błąd główny: {e}")
+        # LANGFUSE: Jeśli cały proces się wywali, oznaczamy ślad jako błędny
+        trace.update(level='ERROR', status_message=str(e), output={"error": traceback.format_exc()})
+    finally:
+        await browser_session.close()
+        langfuse.flush() # LANGFUSE: Upewniamy się, że wszystkie dane zostały wysłane
+        print("--- Zakończono działanie. Dane wysłano do Langfuse. ---")
+
+
+if __name__ == "__main__":
+    if not all([OPENAI_API_KEY, E2B_API_KEY, LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY]):
+        print("BŁĄD: Brak jednego lub więcej kluczy API (OpenAI, E2B, Langfuse). Ustaw je jako zmienne środowiskowe!")
+    else:
+        asyncio.run(main())
+Krok 9.4: Analiza Danych w Panelu Langfuse
+Po uruchomieniu skryptu (python scraper_agent.py), przejdź do swojego projektu w panelu Langfuse. Zobaczysz tam magię.
+
+Główny Widok: Zobaczysz nową pozycję na liście – to Twój trace o nazwie "agent-scraper-run". Jeśli zadanie się udało, będzie zielony. Jeśli wystąpił błąd, który obsłużyliśmy, będzie oznaczony na czerwono.
+
+Szczegóły Śladu (Trace Details): Kliknij w tę pozycję. Zobaczysz pełen obraz operacji:
+
+Metadane: Po lewej stronie zobaczysz tagi, koszt całego zadania, czas trwania.
+Oś Czasu (Timeline): Zobaczysz główny span o nazwie "react-loop". Wewnątrz niego, jak w drzewie, będą zagnieżdżone wszystkie operacje.
+Spany LLM: Każde wywołanie agent.planner.get_plan pojawi się jako osobny, zagnieżdżony element. Klikając w niego, zobaczysz:
+Input: Dokładny, pełny prompt, który został wysłany do GPT-4.
+Output: Surowa odpowiedź JSON od modelu.
+Usage & Cost: Liczba tokenów i precyzyjny koszt tego jednego zapytania.
+Logi: Wewnątrz spana "react-loop" zobaczysz logi, które dodaliśmy ręcznie: iteration, step z myślą i akcją, oraz observation. Możesz krok po kroku prześledzić cały proces decyzyjny agenta.
+Debugowanie Błędu: Jeśli w trakcie pętli wystąpi błąd, span "react-loop" i cały trace zostaną oznaczone na czerwono. W szczegółach spana znajdziesz status_message z treścią błędu oraz pełny traceback w logach, co pozwoli Ci natychmiast zlokalizować problem w kodzie.
+
+Podsumowanie
+Gratulacje! Twój agent nie jest już czarną skrzynką. Jest w pełni oprzyrządowanym, transparentnym systemem. Zyskałeś możliwość nie tylko obserwacji, ale i głębokiej analizy jego zachowania, kosztów i wydajności. Nauczyłeś się też, jak profesjonalnie obsługiwać i logować błędy. To jest kamień milowy, który przenosi Twoje umiejętności z tworzenia działających prototypów na budowanie niezawodnych i gotowych do wdrożenia aplikacji AI.
